@@ -1,3 +1,10 @@
+// Number of tasks mandelbrot_ispc_withtasks launches. Overridable at compile
+// time (-DMANDEL_TASKS=n) so the count can be swept without editing this file
+// between runs; see measure_prog3.sh. The default is the value the sweep
+// found best on the declared machine.
+#ifndef MANDEL_TASKS
+#define MANDEL_TASKS 200
+#endif
 
 
 static inline int mandel(float c_re, float c_im, int count) {
@@ -48,6 +55,12 @@ task void mandelbrot_ispc_task(uniform float x0, uniform float y0,
     
     uniform int ystart = taskIndex * rowsPerTask;
     uniform int yend = ystart + rowsPerTask;
+
+    // The shipped code assumes rowsPerTask divides height exactly, which only
+    // holds for task counts that divide 800. Clamping lets any count be
+    // launched without reading or writing past the end of the image.
+    if (yend > height)
+        yend = height;
     
     uniform float dx = (x1 - x0) / width;
     uniform float dy = (y1 - y0) / height;
@@ -68,12 +81,26 @@ export void mandelbrot_ispc_withtasks(uniform float x0, uniform float y0,
                                       uniform int output[])
 {
 
-    uniform int rowsPerTask = height / 2;
+    // The shipped code launches 2 tasks, which leaves six of this machine's
+    // eight hardware contexts idle and caps the result near 2x the
+    // single-core ISPC figure. Launching many more tasks than cores both fills
+    // every context and balances the load: the Mandelbrot set's cost varies
+    // enormously by row, so fine-grained tasks let the runtime's work queue
+    // hand a new task to whichever core finishes first.
+    uniform int numTasks = MANDEL_TASKS;
+    if (numTasks > height)
+        numTasks = height;
+    if (numTasks < 1)
+        numTasks = 1;
 
-    // create 2 tasks
-    launch[2] mandelbrot_ispc_task(x0, y0, x1, y1,
+    // Round up so the tasks cover every row, then recompute the count so no
+    // task is launched with nothing to do.
+    uniform int rowsPerTask = (height + numTasks - 1) / numTasks;
+    numTasks = (height + rowsPerTask - 1) / rowsPerTask;
+
+    launch[numTasks] mandelbrot_ispc_task(x0, y0, x1, y1,
                                      width, height,
                                      rowsPerTask,
                                      maxIterations,
-                                     output); 
+                                     output);
 }

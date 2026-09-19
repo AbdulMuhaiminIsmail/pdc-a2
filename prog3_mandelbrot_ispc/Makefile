@@ -3,7 +3,11 @@ CXXFLAGS=-I../common -Iobjs/ -O3 -Wall -fPIC -ffp-contract=off
 ISPC=ispc
 # note: requires AVX2
 # disabling AVX2 FMA since it causes a difference in output compared to reference on Mandelbrot 
-ISPCFLAGS=-O3 --target=avx2-i32x8 --arch=x86-64 --opt=disable-fma --pic
+# TASKS overrides the launch count from the command line, e.g. `make TASKS=128`.
+# Unset, the default in mandelbrot.ispc applies.
+TASKS ?=
+TASKFLAG = $(if $(TASKS),-DMANDEL_TASKS=$(TASKS))
+ISPCFLAGS=-O3 --target=avx2-i32x8 --arch=x86-64 --opt=disable-fma --pic $(TASKFLAG)
 
 APP_NAME=mandelbrot_ispc
 OBJDIR=objs
