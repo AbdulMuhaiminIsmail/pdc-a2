@@ -36,6 +36,11 @@ static bool envEnabled(const char* name) {
 
 static const bool reportThreadTimes = envEnabled("MANDEL_THREAD_TIMES");
 
+// Part 4 ships row-cyclic decomposition as the default. The part 1-3 block
+// decomposition stays reachable via MANDEL_BLOCK=1 so both policies can be
+// measured from one binary; it is not a per-thread-count special case.
+static const bool useBlockDecomposition = envEnabled("MANDEL_BLOCK");
+
 
 //
 // workerThreadStart --
@@ -49,28 +54,52 @@ void workerThreadStart(WorkerArgs * const args) {
     const int numThreads = args->numThreads;
     const int threadId = args->threadId;
 
-    // Contiguous block decomposition: thread i owns one uninterrupted span
-    // of rows.  height does not divide evenly for every thread count we test
-    // (1200 / 7, for instance), so the first (height % numThreads) threads
-    // take one extra row rather than dropping the remainder on the last one.
-    const int rowsPerThread = height / numThreads;
-    const int remainder = height % numThreads;
+    int rowsDone = 0;
 
-    const int startRow = threadId * rowsPerThread + std::min(threadId, remainder);
-    const int numRows = rowsPerThread + (threadId < remainder ? 1 : 0);
+    if (useBlockDecomposition) {
 
-    if (numRows > 0) {
-        mandelbrotSerial(args->x0, args->y0, args->x1, args->y1,
-                         args->width, height,
-                         startRow, numRows,
-                         args->maxIterations, args->output);
+        // Contiguous block decomposition: thread i owns one uninterrupted span
+        // of rows.  height does not divide evenly for every thread count we
+        // test (1200 / 7, for instance), so the first (height % numThreads)
+        // threads absorb one extra row rather than dropping the remainder on
+        // the last one.
+        const int rowsPerThread = height / numThreads;
+        const int remainder = height % numThreads;
+
+        const int startRow = threadId * rowsPerThread + std::min(threadId, remainder);
+        const int numRows = rowsPerThread + (threadId < remainder ? 1 : 0);
+
+        if (numRows > 0) {
+            mandelbrotSerial(args->x0, args->y0, args->x1, args->y1,
+                             args->width, height,
+                             startRow, numRows,
+                             args->maxIterations, args->output);
+        }
+        rowsDone = numRows;
+
+    } else {
+
+        // Row-cyclic decomposition: thread i owns rows i, i+numThreads,
+        // i+2*numThreads, ...  Cost varies smoothly and symmetrically down the
+        // image, so interleaving hands every thread a near-identical mix of
+        // cheap and expensive rows without any synchronisation, and the same
+        // rule works unchanged at every thread count.  The rows a thread owns
+        // are not contiguous, so this is one mandelbrotSerial call per row.
+        for (int row = threadId; row < height; row += numThreads) {
+            mandelbrotSerial(args->x0, args->y0, args->x1, args->y1,
+                             args->width, height,
+                             row, 1,
+                             args->maxIterations, args->output);
+            rowsDone++;
+        }
     }
 
     if (reportThreadTimes) {
         const double elapsed = CycleTimer::currentSeconds() - threadStartTime;
-        printf("[thread %2d of %2d]\trows %4d-%4d (%4d rows)\t%8.3f ms\n",
-               threadId, numThreads, startRow, startRow + numRows - 1, numRows,
-               elapsed * 1000);
+        printf("[thread %2d of %2d]\t%s\t%4d rows\t%8.3f ms\n",
+               threadId, numThreads,
+               useBlockDecomposition ? "block " : "cyclic",
+               rowsDone, elapsed * 1000);
     }
 }
 
