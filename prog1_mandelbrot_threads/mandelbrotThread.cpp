@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <stdio.h>
+#include <algorithm>
 #include <thread>
 
 #include "CycleTimer.h"
@@ -30,13 +31,27 @@ extern void mandelbrotSerial(
 // Thread entrypoint.
 void workerThreadStart(WorkerArgs * const args) {
 
-    // TODO FOR CS149 STUDENTS: Implement the body of the worker
-    // thread here. Each thread should make a call to mandelbrotSerial()
-    // to compute a part of the output image.  For example, in a
-    // program that uses two threads, thread 0 could compute the top
-    // half of the image and thread 1 could compute the bottom half.
+    const int height = static_cast<int>(args->height);
+    const int numThreads = args->numThreads;
+    const int threadId = args->threadId;
 
-    printf("Hello world from thread %d\n", args->threadId);
+    // Contiguous block decomposition: thread i owns one uninterrupted span
+    // of rows.  height does not divide evenly for every thread count we test
+    // (1200 / 7, for instance), so the first (height % numThreads) threads
+    // take one extra row rather than dropping the remainder on the last one.
+    const int rowsPerThread = height / numThreads;
+    const int remainder = height % numThreads;
+
+    const int startRow = threadId * rowsPerThread + std::min(threadId, remainder);
+    const int numRows = rowsPerThread + (threadId < remainder ? 1 : 0);
+
+    if (numRows <= 0)
+        return;
+
+    mandelbrotSerial(args->x0, args->y0, args->x1, args->y1,
+                     args->width, height,
+                     startRow, numRows,
+                     args->maxIterations, args->output);
 }
 
 //
@@ -63,10 +78,6 @@ void mandelbrotThread(
     WorkerArgs args[MAX_THREADS];
 
     for (int i=0; i<numThreads; i++) {
-      
-        // TODO FOR CS149 STUDENTS: You may or may not wish to modify
-        // the per-thread arguments here.  The code below copies the
-        // same arguments for each thread
         args[i].x0 = x0;
         args[i].y0 = y0;
         args[i].x1 = x1;
@@ -76,7 +87,7 @@ void mandelbrotThread(
         args[i].maxIterations = maxIterations;
         args[i].numThreads = numThreads;
         args[i].output = output;
-      
+
         args[i].threadId = i;
     }
 
@@ -86,7 +97,7 @@ void mandelbrotThread(
     for (int i=1; i<numThreads; i++) {
         workers[i] = std::thread(workerThreadStart, &args[i]);
     }
-    
+
     workerThreadStart(&args[0]);
 
     // join worker threads
@@ -94,4 +105,3 @@ void mandelbrotThread(
         workers[i].join();
     }
 }
-
