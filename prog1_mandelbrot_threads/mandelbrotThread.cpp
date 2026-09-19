@@ -25,11 +25,25 @@ extern void mandelbrotSerial(
     int output[]);
 
 
+// Part 3 instrumentation.  Reporting per-thread times means a printf inside
+// the region main.cpp is timing, so it is off unless MANDEL_THREAD_TIMES is
+// set in the environment.  The getenv() happens once during static
+// initialisation, before main() runs, so the steady-state path reads a bool.
+static bool envEnabled(const char* name) {
+    const char* v = getenv(name);
+    return v != NULL && v[0] != '\0' && v[0] != '0';
+}
+
+static const bool reportThreadTimes = envEnabled("MANDEL_THREAD_TIMES");
+
+
 //
 // workerThreadStart --
 //
 // Thread entrypoint.
 void workerThreadStart(WorkerArgs * const args) {
+
+    const double threadStartTime = reportThreadTimes ? CycleTimer::currentSeconds() : 0.0;
 
     const int height = static_cast<int>(args->height);
     const int numThreads = args->numThreads;
@@ -45,13 +59,19 @@ void workerThreadStart(WorkerArgs * const args) {
     const int startRow = threadId * rowsPerThread + std::min(threadId, remainder);
     const int numRows = rowsPerThread + (threadId < remainder ? 1 : 0);
 
-    if (numRows <= 0)
-        return;
+    if (numRows > 0) {
+        mandelbrotSerial(args->x0, args->y0, args->x1, args->y1,
+                         args->width, height,
+                         startRow, numRows,
+                         args->maxIterations, args->output);
+    }
 
-    mandelbrotSerial(args->x0, args->y0, args->x1, args->y1,
-                     args->width, height,
-                     startRow, numRows,
-                     args->maxIterations, args->output);
+    if (reportThreadTimes) {
+        const double elapsed = CycleTimer::currentSeconds() - threadStartTime;
+        printf("[thread %2d of %2d]\trows %4d-%4d (%4d rows)\t%8.3f ms\n",
+               threadId, numThreads, startRow, startRow + numRows - 1, numRows,
+               elapsed * 1000);
+    }
 }
 
 //
