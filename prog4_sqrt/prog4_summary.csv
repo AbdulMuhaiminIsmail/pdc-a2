@@ -1,0 +1,4 @@
+mode,runs,serial_ms,ispc_ms,task_ms,avx2_ms,ispc_spread_pct,simd_speedup,task_speedup,multicore_gain,avx2_speedup
+best,5,2007.525,308.691,51.934,227.600,0.9,6.50,38.66,5.94,8.82
+worst,5,274.938,309.806,52.565,228.912,3.3,0.89,5.23,5.89,1.20
+random,5,787.659,178.261,28.472,141.704,1.0,4.42,27.66,6.26,5.56
