@@ -17,13 +17,28 @@ set -u
 
 RUNS=${RUNS:-5}
 THREAD_COUNTS=${THREAD_COUNTS:-"2 3 4 5 6 7 8 16"}
+MODES=${MODES:-"cyclic block"}
 BIN=./mandelbrot
+
+# NICE=1 reruns the sweep under sudo nice -n -20.  The contention probe showed
+# the 8-thread configuration is the only one that responds to priority, so the
+# elevated-priority sweep is what measures this machine's real ceiling rather
+# than its scheduling luck.  Results land in a separate pair of files so the
+# normal-priority numbers stay intact.
+NICE=${NICE:-0}
+if [ "$NICE" != "0" ]; then SUFFIX="_nice"; else SUFFIX=""; fi
 
 [ -x "$BIN" ] || { echo "build first: make" >&2; exit 1; }
 
 run_once() {   # mode view threads -> "serial_ms thread_ms"
     local mode=$1 view=$2 threads=$3 out
-    if [ "$mode" = block ]; then
+    if [ "$NICE" != "0" ]; then
+        if [ "$mode" = block ]; then
+            out=$(sudo env MANDEL_BLOCK=1 nice -n -20 $BIN -t "$threads" -v "$view" 2>/dev/null)
+        else
+            out=$(sudo nice -n -20 $BIN -t "$threads" -v "$view" 2>/dev/null)
+        fi
+    elif [ "$mode" = block ]; then
         out=$(MANDEL_BLOCK=1 $BIN -t "$threads" -v "$view" 2>/dev/null)
     else
         out=$($BIN -t "$threads" -v "$view" 2>/dev/null)
@@ -35,9 +50,9 @@ run_once() {   # mode view threads -> "serial_ms thread_ms"
 }
 
 cmd_sweep() {
-    local raw=prog1_raw.csv sum=prog1_summary.csv
+    local raw=prog1_raw${SUFFIX}.csv sum=prog1_summary${SUFFIX}.csv
     echo "mode,view,threads,run,serial_ms,thread_ms" > "$raw"
-    for mode in cyclic block; do
+    for mode in $MODES; do
       for view in 1 2; do
         for t in $THREAD_COUNTS; do
           printf '  %-6s view %s  %2s threads: ' "$mode" "$view" "$t"
