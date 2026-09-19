@@ -1,5 +1,6 @@
 \documentclass[11pt,a4paper]{article}
 
+\usepackage{lmodern}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage[margin=2.3cm]{geometry}
@@ -13,6 +14,7 @@
 
 \graphicspath{{prog1_mandelbrot_threads/}}
 
+\setlength{\emergencystretch}{3em}   % let TeX stretch rather than overflow
 \setlength{\parskip}{0.5em}
 \setlength{\parindent}{0pt}
 \captionsetup{font=small}
@@ -40,7 +42,7 @@ below. No result was produced on any other machine.
 
 \begin{table}[H]
 \centering
-\begin{tabular}{ll}
+\begin{tabular}{l p{10.3cm}}
 \toprule
 \textbf{Field} & \textbf{Value} \\
 \midrule
@@ -52,17 +54,29 @@ Base clock                & 2.90\,GHz \\
 Maximum turbo clock       & 3.90\,GHz rated; 3.913\,GHz observed single-threaded \\
 Widest SIMD unit          & AVX2 --- 256-bit, $W = 8$ single-precision lanes \\
                           & (AVX-512 is \emph{not} present on this part) \\
-RAM size and type         & 16\,GB (\texttt{MemTotal} 16\,249\,212\,kB), \textbf{[RAM TYPE PENDING]} \\
+RAM size and type         & 16\,GB DDR4-2667 (\texttt{MemTotal} 16\,249\,212\,kB) \\
+                          & \textbf{Single-channel}: one 16\,GB DIMM in Channel~A;
+                            Channel~B empty \\
+                          & Theoretical peak bandwidth
+                            $2667 \times 8 = 21.3$\,GB/s \\
 Machine type              & Personal laptop (own machine, not rented) \\
 Operating system          & Ubuntu 24.04.5 LTS \\
 Kernel                    & 7.0.0-31-generic \\
 Compiler                  & gcc (Ubuntu 13.3.0-6ubuntu2\textasciitilde24.04.1) 13.3.0 \\
 ISPC version              & 1.31.0 (build commit c6adb4f86f5678ce, LLVM 23.0.0) \\
-Power state during measurement & Mains power connected; CPU governor
-                                 \texttt{performance} \\
+Power state               & Mains power connected throughout; CPU governor set to \texttt{performance} \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+The memory configuration deserves emphasis because it is not the common case.
+\texttt{dmidecode} reports a single 16\,GB module in Channel~A with Channel~B
+unpopulated, so the machine operates in single-channel mode. Its theoretical
+peak memory bandwidth is therefore $2667\,\text{MT/s} \times 8\,\text{bytes}
+= 21.3$\,GB/s, half the $42.7$\,GB/s that the same modules would provide in a
+dual-channel configuration. This has no effect on Programs 1--4, which are
+compute-bound, but it is the binding constraint in Program~5 and is revisited
+there.
 
 This topology --- 4 physical cores, 8 hardware threads, AVX2 --- is the same
 as the Stanford \texttt{myth} machines the original handout targets, so the
@@ -76,8 +90,8 @@ that costs.
 %======================================================================
 
 Every number in this report was obtained under the following protocol, which
-is automated in \texttt{prog1\_mandelbrot\_threads/measure.sh} so that it is
-applied identically to every configuration.
+is automated in \texttt{measure.sh} so that it is applied identically to
+every configuration.
 
 \begin{itemize}
 \item All other applications were closed. Measurements were taken from a
@@ -94,17 +108,23 @@ applied identically to every configuration.
       the best of five best-of-fives, i.e.\ the minimum over 25 executions.
 \item The minimum \emph{and} maximum across the five runs were recorded for
       every configuration, so the run-to-run spread can be quoted rather than
-      assumed. Spreads are given in
-      \texttt{prog1\_mandelbrot\_threads/prog1\_summary.csv} and were below
-      2\% for all but the configurations discussed in
+      assumed. They are recorded in \texttt{prog1\_summary.csv} and were
+      below 2\% for every configuration except those discussed in
       Section~\ref{sec:p1sched}.
 \item Long sweeps were separated so the machine could return to idle
       temperature between them.
 \end{itemize}
 
-No single-run timing is reported anywhere in this document. The raw
-per-execution data is committed as
-\texttt{prog1\_mandelbrot\_threads/prog1\_raw.csv} (160 rows for the
+No performance figure in this document comes from a single run. Two
+diagnostic tables are exceptions and are labelled as such: the
+involuntary-context-switch counts in Table~\ref{tab:p1cs} and the core-clock
+samples in Table~\ref{tab:p1clock}. Neither is a timing claim --- the first
+counts scheduler events and the second samples a hardware register --- and
+neither is used to support a speedup number. Every speedup, runtime and
+efficiency quoted below is the minimum of five runs.
+
+The raw per-execution data is committed as
+\texttt{prog1\_raw.csv} (160 rows for the
 normal-priority sweep), and every table and figure below is generated from
 those files by \texttt{make\_tables.py} and \texttt{plot\_prog1.py} rather
 than transcribed by hand.
@@ -115,13 +135,13 @@ than transcribed by hand.
 
 The starter code does not compile unmodified under GCC 13.3.0. Two headers
 that older GCC versions pulled in transitively must now be included
-explicitly:
+explicitly. Both files live in the Program~1 directory:
 
 \begin{itemize}
-\item \texttt{prog1\_mandelbrot\_threads/main.cpp} --- added
+\item \texttt{main.cpp} --- added
       \texttt{\#include <cstring>}. Without it, the call to \texttt{memset}
       fails with \emph{`memset' was not declared in this scope}.
-\item \texttt{prog1\_mandelbrot\_threads/mandelbrotThread.cpp} --- added
+\item \texttt{mandelbrotThread.cpp} --- added
       \texttt{\#include <cstdlib>}. Without it, the call to \texttt{exit} in
       the thread-count guard fails with \emph{`exit' was not declared in this
       scope}.
