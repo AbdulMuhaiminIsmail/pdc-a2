@@ -242,14 +242,53 @@ void clampedExpSerial(float* values, int* exponents, float* output, int N) {
 
 void clampedExpVector(float* values, int* exponents, float* output, int N) {
 
-  //
-  // CS149 STUDENTS TODO: Implement your vectorized version of
-  // clampedExpSerial() here.
-  //
-  // Your solution should work for any value of
-  // N and VECTOR_WIDTH, not just when VECTOR_WIDTH divides N
-  //
-  
+  __cs149_vec_float x, result;
+  __cs149_vec_int   y, count;
+  __cs149_mask      maskAll, maskActive, maskClamp;
+
+  __cs149_vec_int   zeroInt  = _cs149_vset_int(0);
+  __cs149_vec_int   oneInt   = _cs149_vset_int(1);
+  __cs149_vec_float clampMax = _cs149_vset_float(9.999999f);
+
+  for (int i = 0; i < N; i += VECTOR_WIDTH) {
+
+    // The final iteration may be partial. Enabling only the lanes that hold
+    // real data keeps the store from writing past N, which main.cpp checks
+    // for explicitly, and keeps dead lanes out of the utilization figures.
+    int lanes = std::min(VECTOR_WIDTH, N - i);
+    maskAll = _cs149_init_ones(lanes);
+
+    _cs149_vload_float(x, values + i, maskAll);        // x = values[i]
+    _cs149_vload_int(y, exponents + i, maskAll);       // y = exponents[i]
+
+    // Starting from 1 and multiplying y times gives x^y, and falls out of the
+    // loop immediately when y == 0 leaving 1.f - which is exactly the serial
+    // function's special case, so it needs no separate branch.
+    _cs149_vset_float(result, 1.f, maskAll);
+    _cs149_vmove_int(count, y, maskAll);
+
+    // Lanes outside maskAll must never appear active, and _cs149_vgt_int
+    // leaves masked-off lanes at their previous value, so start from zeros.
+    maskActive = _cs149_init_ones(0);
+    _cs149_vgt_int(maskActive, count, zeroInt, maskAll);
+
+    // The whole vector iterates until its slowest lane is finished. Lanes that
+    // ran out of exponent sit masked off, consuming issue slots but doing no
+    // work - this divergence is what the utilization statistic measures.
+    while (_cs149_cntbits(maskActive) > 0) {
+      _cs149_vmult_float(result, result, x, maskActive);
+      _cs149_vsub_int(count, count, oneInt, maskActive);
+      _cs149_vgt_int(maskActive, count, zeroInt, maskAll);
+    }
+
+    // Clamp. Applying this to every active lane is safe: a y == 0 lane holds
+    // 1.f, which is below the ceiling, so the result is unchanged.
+    maskClamp = _cs149_init_ones(0);
+    _cs149_vgt_float(maskClamp, result, clampMax, maskAll);
+    _cs149_vset_float(result, 9.999999f, maskClamp);
+
+    _cs149_vstore_float(output + i, result, maskAll);
+  }
 }
 
 // returns the sum of all elements in values
@@ -266,15 +305,30 @@ float arraySumSerial(float* values, int N) {
 // You can assume N is a multiple of VECTOR_WIDTH
 // You can assume VECTOR_WIDTH is a power of 2
 float arraySumVector(float* values, int N) {
-  
-  //
-  // CS149 STUDENTS TODO: Implement your vectorized version of arraySumSerial here
-  //
-  
-  for (int i=0; i<N; i+=VECTOR_WIDTH) {
 
+  __cs149_mask maskAll = _cs149_init_ones();
+  __cs149_vec_float accum = _cs149_vset_float(0.f);
+  __cs149_vec_float x, tmp;
+
+  // Phase 1: N/VECTOR_WIDTH vector adds fold the array into one register,
+  // leaving VECTOR_WIDTH partial sums, one per lane.
+  for (int i = 0; i < N; i += VECTOR_WIDTH) {
+    _cs149_vload_float(x, values + i, maskAll);
+    _cs149_vadd_float(accum, accum, x, maskAll);
   }
 
-  return 0.0;
+  // Phase 2: reduce those lanes to a single value in log2(VECTOR_WIDTH)
+  // rounds. hadd sums adjacent pairs and duplicates each result across the
+  // pair; interleave then moves even-indexed lanes into the front half, which
+  // packs the distinct partial sums next to each other so the following hadd
+  // pairs them. After log2(VECTOR_WIDTH) rounds every lane holds the total.
+  for (int stride = VECTOR_WIDTH; stride > 1; stride /= 2) {
+    _cs149_hadd_float(tmp, accum);
+    _cs149_interleave_float(accum, tmp);
+  }
+
+  // N/VECTOR_WIDTH + 2*log2(VECTOR_WIDTH) vector operations in total, against
+  // N scalar additions for the serial version.
+  return accum.value[0];
 }
 

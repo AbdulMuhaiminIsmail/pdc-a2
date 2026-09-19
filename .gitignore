@@ -21,3 +21,4 @@ ispc-*.tar.gz
 *.fls
 *.fdb_latexmk
 *.synctex.gz
+analyze_divergence

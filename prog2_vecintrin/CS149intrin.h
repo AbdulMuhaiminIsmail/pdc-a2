@@ -1,5 +1,10 @@
-// Define vector unit width here
+// Define vector unit width here.
+// Wrapped in a guard so the width sweep can be driven from the command line
+// (-DVECTOR_WIDTH=8) without editing this file between runs. With no override
+// the default below applies exactly as before.
+#ifndef VECTOR_WIDTH
 #define VECTOR_WIDTH 4
+#endif
 
 #ifndef CS149INTRIN_H_
 #define CS149INTRIN_H_
