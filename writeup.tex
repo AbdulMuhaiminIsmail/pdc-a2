@@ -12,7 +12,7 @@
 \usepackage[table]{xcolor}
 \usepackage[hidelinks]{hyperref}
 
-\graphicspath{{prog1_mandelbrot_threads/}{prog2_vecintrin/}}
+\graphicspath{{prog1_mandelbrot_threads/}{prog2_vecintrin/}{prog3_mandelbrot_ispc/}}
 
 \setlength{\emergencystretch}{3em}   % let TeX stretch rather than overflow
 \setlength{\parskip}{0.5em}
@@ -25,6 +25,7 @@
 % the CSV files written by measure.sh.
 \input{prog1_mandelbrot_threads/prog1_tables.tex}
 \input{prog2_vecintrin/prog2_tables.tex}
+\input{prog3_mandelbrot_ispc/prog3_tables.tex}
 
 \title{\vspace{-1.5cm}\textbf{CS3006 --- Parallel and Distributed Computing}\\[0.3em]
        \large Assignment 2: Performance Analysis on a Multi-Core CPU}
@@ -690,5 +691,257 @@ opposite directions: a kernel can become less efficient and faster at the same
 time. And divergence penalties are bounded by the spread of the work, not by
 the width, which is why the marginal return to widening improves rather than
 degrades once the spread is saturated.
+
+%======================================================================
+\section{Program 3: Parallel Fractal Generation Using ISPC}
+%======================================================================
+
+The image here is $1200 \times 800$ at 256 iterations, smaller than Program~1's
+$1600 \times 1200$, so the serial baselines are not comparable between the two
+programs. All figures below follow the Section~2 protocol: five runs per
+configuration, minimum reported, spread recorded. The sweep was taken at
+elevated priority for the reason established in
+Section~\ref{sec:p1sched}; run-to-run spread fell to 1--5\%.
+
+\subsection{Part 1: SIMD width alone}
+
+\paragraph{What speedup should be expected?} The ISPC compiler is targeting
+\texttt{avx2-i32x8}, so a gang is eight program instances wide and executes on
+one core's 256-bit vector unit. Eight single-precision lanes operating in
+lockstep gives a ceiling of $W = 8$. No multi-core parallelism is involved at
+this stage.
+
+\begin{table}[H]
+\centering
+\progThreeSimd
+\caption{ISPC without tasks: SIMD within a single core.}
+\label{tab:p3simd}
+\end{table}
+
+The measured $5.12\times$ is \textbf{64\% of the ideal $8\times$}.
+
+\paragraph{Why less than $8\times$?} The same mechanism as Program~2:
+\emph{divergence}. A gang covers eight horizontally adjacent pixels, and
+\texttt{mandel()} contains a data-dependent \texttt{break}. A lane whose pixel
+escapes after three iterations cannot leave the loop while its seven
+neighbours are still iterating --- it is masked off and the gang continues.
+Since pixels inside the set never escape and run the full 256 iterations, any
+gang straddling the set's boundary costs as much as its most expensive pixel.
+Only gangs entirely inside or entirely outside the set are efficient.
+
+\paragraph{The view comparison confirms it.} The handout suggests comparing
+views to test this hypothesis, and the comparison is decisive. View~2 achieves
+$4.32\times$ against view~1's $5.12\times$ --- \textbf{16\% worse}. View~2 is a
+deep zoom into the set's boundary, where the structure is finely filamentary
+and neighbouring pixels frequently disagree about iteration count. View~1
+contains large uniform regions --- the black interior and the empty margins ---
+where all eight lanes of a gang agree and no work is wasted. More boundary per
+pixel means more divergence means lower speedup, exactly as predicted.
+
+This is the same result as Program~2 reached by a different route: SIMD
+efficiency is governed by agreement between lanes, not by the amount of work.
+
+\subsection{Part 2: ISPC tasks}
+
+\paragraph{As shipped.} \texttt{mandelbrot\_ispc\_withtasks} contains
+\texttt{launch[2]}, splitting the image into two halves. That yields
+$9.54\times$ over serial, and only $44.555/23.624 = 1.89\times$ over the
+single-core ISPC version. The reason is plain: two tasks can occupy at most two
+of this machine's eight hardware contexts, leaving six idle.
+
+\begin{table}[H]
+\centering
+\progThreeSweepViewOne
+\caption{View 1, elevated priority. \emph{of $C{\times}W$} is the fraction of
+         the $4 \times 8 = 32$ theoretical ceiling.}
+\label{tab:p3sweep1}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{prog3_tasks.png}
+\caption{Speedup against task count. The knee is at 16 tasks --- twice the
+         hardware thread count --- not at 8.}
+\label{fig:p3}
+\end{figure}
+
+\paragraph{How the task count was chosen.} By sweeping it: 2, 8, 16, 32, 64,
+100, 200, 400 and 800 tasks, five runs each, at both views. Speedup climbs
+steeply to 16 tasks, then flattens; from 64 tasks onward every count lands
+within 1\% of every other. \textbf{200 tasks} was selected as the default --- four
+rows per task --- sitting in the middle of the plateau rather than at its edge,
+so the choice is not sensitive to where exactly the knee falls.
+
+\paragraph{Why more tasks than cores wins --- two separate effects.} It is
+tempting to say ``more tasks fill more cores'', but the data shows that is only
+half the story, and not the larger half.
+
+\emph{Occupancy} explains the climb from 2 to 8 tasks ($9.54\times \to
+17.46\times$). With fewer tasks than contexts, contexts sit idle.
+
+\emph{Load balance} explains everything after that. Going from 8 tasks to 16
+gains a further 63\% ($17.46\times \to 28.43\times$) --- and that cannot be
+occupancy, because at 8 tasks all eight contexts were already busy. It is the
+same imbalance Program~1 diagnosed: with exactly one task per context, each
+context is stuck with whatever work its task happens to contain, and rows
+through the set's body cost far more than rows through the margins. Runtime
+becomes the slowest task. Launching more tasks than contexts lets the ISPC
+runtime's work queue hand the next task to whichever context finishes first,
+which is dynamic load balancing rather than the static interleaving Program~1
+had to construct by hand.
+
+Program~1 solved this by choosing the mapping carefully. ISPC solves it by
+making the units small enough that the mapping stops mattering.
+
+\subsection{Achieved speedup against the $C \times W$ ceiling}
+
+The theoretical ceiling for this machine is $C \times W = 4 \times 8 = 32$.
+
+\[
+\textbf{Achieved: } 29.93\times \;=\; \textbf{93.5\% of } C \times W
+\]
+
+The result factors cleanly into its two sources:
+\[
+\underbrace{5.12\times}_{\text{SIMD, vs } W=8}
+\;\times\;
+\underbrace{5.84\times}_{\text{multi-core, vs } C=4}
+\;=\; 29.93\times
+\]
+where the multi-core factor is the single-core ISPC time divided by the task
+time, $44.262/7.575$.
+
+This decomposition is the whole account of the shortfall, and it is not what a
+naive reading of $C \times W$ would suggest.
+
+\begin{itemize}
+\item \textbf{The SIMD factor underperforms badly}: $5.12$ against a ceiling of
+      $8$, or 64\%. Divergence costs roughly a third of the vector unit.
+\item \textbf{The multi-core factor overperforms}: $5.84$ against $C = 4$, or
+      146\%. Hyper-Threading is contributing, exactly as in Program~1 where
+      eight threads on four cores reached $6.66\times$. The tasks are latency-bound
+      scalar-dependency work, which is the case SMT handles well.
+\item The two nearly cancel. The product lands at 93.5\% of a ceiling that
+      assumed perfect SIMD and no SMT --- \emph{both} of those assumptions are
+      wrong, in opposite directions.
+\end{itemize}
+
+Correcting for the 4.6\% all-core turbo drop measured in
+Table~\ref{tab:p1clock} gives $29.93 \times (3881/3704) = 31.36\times$ in
+clock-equivalent terms.
+
+\paragraph{The handout's target was not met.} The assignment states one should
+exceed $32\times$. This machine reaches $29.93\times$, or $31.36\times$
+normalised for clock. The gap is the same one Program~1 identified: a 45\,W
+mobile part sustaining all eight contexts runs below the clock at which its own
+serial baseline was timed, and the reference \texttt{myth} machine, a 91\,W
+desktop i7-7700K at 4.2--4.5\,GHz, does not pay that penalty. Raising priority
+did not close the gap --- it improved precision (spread fell from 8--40\% to
+1--5\%) but not the ratio, because the serial baseline sped up by the same
+proportion. No configuration of task count reaches $32\times$ on this hardware.
+
+\subsection{Extra credit: threads versus ISPC tasks}
+
+The mechanisms look similar --- \texttt{launch}/\texttt{sync} against
+\texttt{create}/\texttt{join} --- but they differ in what they commit the
+runtime to.
+
+\paragraph{A task is a queue entry; a thread is a scheduling entity.} Reading
+\texttt{common/tasksys.cpp}, the Linux build uses the pthreads backend, which
+sizes its pool once:
+
+\begin{quote}\small
+\texttt{// We launch one fewer thread than there are cores, since the main
+thread here will also grab jobs from the task queue itself.} \\
+\texttt{nThreads = sysconf(\_SC\_NPROCESSORS\_ONLN) - 1;}
+\end{quote}
+
+On this machine that is $8 - 1 = 7$ workers plus the calling thread. Inspecting
+\texttt{/proc/<pid>/task} during a run confirms \textbf{exactly 8 OS threads},
+whether 2 tasks or 800 are launched. The task count never changes the thread
+count; it only changes how finely the work is divided among a fixed pool. The
+queue is bounded at $128 \times 2^{14} = 2\,097\,152$ tasks.
+
+\paragraph{What happens at 10\,000 of each.} Both were measured.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+ & 10\,000 ISPC tasks & 10\,000 \texttt{std::thread}s \\
+\midrule
+OS threads created & 0 (pool already exists) & 10\,000 \\
+Cost              & below the noise floor & \textbf{348\,ms}, 34.8\,\textmu s each \\
+Peak virtual memory & unchanged & 4.3\,GB with only 500 live \\
+If all were live   & --- & $10^4 \times 8$\,MB $= 78$\,GB of stacks \\
+Outcome            & finishes; balance improves & creation alone costs $46\times$ \\
+                   &                            & the entire computation \\
+\bottomrule
+\end{tabular}
+\caption{Measured. The task figure comes from the sweep: quadrupling the count
+         from 200 to 800 changes runtime by 0.08\%, inside the 1--2\%
+         run-to-run spread, so per-task overhead is not resolvable at this
+         granularity. Thread creation was measured directly by
+         \texttt{threads\_vs\_tasks.cpp}.}
+\label{tab:p3tasks}
+\end{table}
+
+The comparison is stark. Creating 10\,000 threads takes 348\,ms; computing the
+entire Mandelbrot image with 200 tasks takes 7.575\,ms. Thread creation alone
+would cost forty-six times the work it was meant to parallelise. Threads had to
+be created in batches of 500 because 10\,000 simultaneously live threads
+approaches the per-user limit (\texttt{ulimit -u} is 55\,995 here, but each
+thread reserves an 8\,MB stack).
+
+\paragraph{The deeper difference.} \texttt{create}/\texttt{join} is a statement
+about \emph{concurrency}: each thread is an independent entity that the kernel
+must schedule, can block, can synchronise with others, and can make progress
+independently. \texttt{launch}/\texttt{sync} is a statement about
+\emph{available parallelism}: it declares work that \emph{may} run in parallel
+and leaves placement to the runtime.
+
+The consequence is that tasks decouple decomposition granularity from hardware
+parallelism, and threads bind them together. This is precisely why Part~2 could
+be tuned at all: 200 tasks were chosen for \emph{load-balancing} reasons, with
+no obligation to own 200 execution contexts. Program~1 had no such freedom ---
+every extra thread there was a real OS thread, which is why 16 threads was
+measurably worse than 8.
+
+The price of that freedom is expressiveness. Tasks within a launch group have
+no ordering guarantees and cannot wait on one another; a task that blocked
+waiting for a sibling could deadlock, since the sibling may be queued behind it
+on the same finite pool. Threads can block on each other freely. Tasks trade
+the ability to synchronise for the ability to be cheap and numerous --- which is
+the right trade for data-parallel work, and the wrong one for a pipeline of
+communicating stages.
+
+\subsection{Summary}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+Question & Answer & Evidence \\
+\midrule
+Expected SIMD max?      & $W = 8$                    & \texttt{avx2-i32x8}, 8 lanes \\
+Observed?               & $5.12\times$, 64\% of it   & Divergence in \texttt{mandel()} \\
+Confirmed how?          & View 2 is 16\% worse       & Finer boundary, less lane agreement \\
+Task speedup as shipped?& $9.54\times$; $1.89\times$ over non-task & 2 of 8 contexts used \\
+Best task count?        & 200 (plateau from 64)      & Swept 2--800 \\
+Why?                    & Occupancy \emph{then} balance & 8$\to$16 tasks gains 63\% \\
+Achieved vs $C \times W$? & $29.93 / 32 = 93.5\%$    & $5.12 \times 5.84$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{What this program demonstrates.} A theoretical ceiling can be nearly
+met by two errors cancelling rather than by both terms being achieved: the SIMD
+factor reached only 64\% of $W$ while the core factor exceeded $C$ by 46\%, and
+the product still landed at 93.5\% of $C \times W$. Reporting only the product
+would have hidden both facts. Separately, the most valuable property of the
+task abstraction turned out not to be parallelism but \emph{granularity}: being
+able to create far more work units than execution contexts, at negligible cost,
+is what makes dynamic load balancing possible --- and it is exactly what the
+thread abstraction cannot offer, at 34.8\,\textmu s apiece.
 
 \end{document}
