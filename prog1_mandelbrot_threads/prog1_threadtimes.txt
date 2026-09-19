@@ -1,0 +1,140 @@
+### mode=block threads=4 view=1
+[mandelbrot serial]:		[479.392] ms
+[thread  3 of  4]	block 	 300 rows	  47.594 ms
+[thread  0 of  4]	block 	 300 rows	  50.322 ms
+[thread  1 of  4]	block 	 300 rows	 198.770 ms
+[thread  2 of  4]	block 	 300 rows	 199.591 ms
+[thread  3 of  4]	block 	 300 rows	  47.436 ms
+[thread  0 of  4]	block 	 300 rows	  50.016 ms
+[thread  1 of  4]	block 	 300 rows	 198.993 ms
+[thread  2 of  4]	block 	 300 rows	 199.620 ms
+[thread  3 of  4]	block 	 300 rows	  47.420 ms
+[thread  0 of  4]	block 	 300 rows	  50.036 ms
+[thread  1 of  4]	block 	 300 rows	 198.479 ms
+[thread  2 of  4]	block 	 300 rows	 198.938 ms
+[thread  3 of  4]	block 	 300 rows	  47.268 ms
+[thread  0 of  4]	block 	 300 rows	  49.963 ms
+[thread  1 of  4]	block 	 300 rows	 199.421 ms
+[thread  2 of  4]	block 	 300 rows	 201.756 ms
+[thread  0 of  4]	block 	 300 rows	  51.833 ms
+[thread  3 of  4]	block 	 300 rows	  52.228 ms
+[thread  1 of  4]	block 	 300 rows	 200.855 ms
+[thread  2 of  4]	block 	 300 rows	 201.891 ms
+[mandelbrot thread]:		[199.082] ms
+				(2.41x speedup from 4 threads)
+
+### mode=block threads=8 view=1
+[mandelbrot serial]:		[473.119] ms
+[thread  0 of  8]	block 	 150 rows	   9.193 ms
+[thread  7 of  8]	block 	 150 rows	   9.310 ms
+[thread  1 of  8]	block 	 150 rows	  43.186 ms
+[thread  6 of  8]	block 	 150 rows	  43.310 ms
+[thread  5 of  8]	block 	 150 rows	  83.909 ms
+[thread  2 of  8]	block 	 150 rows	  85.912 ms
+[thread  4 of  8]	block 	 150 rows	 122.971 ms
+[thread  3 of  8]	block 	 150 rows	 124.665 ms
+[thread  7 of  8]	block 	 150 rows	  15.395 ms
+[thread  0 of  8]	block 	 150 rows	  18.617 ms
+[thread  6 of  8]	block 	 150 rows	  40.922 ms
+[thread  1 of  8]	block 	 150 rows	  42.948 ms
+[thread  5 of  8]	block 	 150 rows	  84.194 ms
+[thread  2 of  8]	block 	 150 rows	  87.335 ms
+[thread  3 of  8]	block 	 150 rows	 122.863 ms
+[thread  4 of  8]	block 	 150 rows	 127.950 ms
+[thread  0 of  8]	block 	 150 rows	   9.323 ms
+[thread  7 of  8]	block 	 150 rows	   9.768 ms
+[thread  1 of  8]	block 	 150 rows	  42.883 ms
+[thread  6 of  8]	block 	 150 rows	  43.164 ms
+[thread  2 of  8]	block 	 150 rows	  87.333 ms
+[thread  5 of  8]	block 	 150 rows	  87.512 ms
+[thread  3 of  8]	block 	 150 rows	 121.959 ms
+[thread  4 of  8]	block 	 150 rows	 124.437 ms
+[thread  0 of  8]	block 	 150 rows	  18.245 ms
+[thread  7 of  8]	block 	 150 rows	  16.406 ms
+[thread  6 of  8]	block 	 150 rows	  40.015 ms
+[thread  1 of  8]	block 	 150 rows	  43.015 ms
+[thread  2 of  8]	block 	 150 rows	  87.059 ms
+[thread  5 of  8]	block 	 150 rows	  87.278 ms
+[thread  4 of  8]	block 	 150 rows	 124.836 ms
+[thread  3 of  8]	block 	 150 rows	 124.944 ms
+[thread  7 of  8]	block 	 150 rows	   9.236 ms
+[thread  0 of  8]	block 	 150 rows	   9.833 ms
+[thread  1 of  8]	block 	 150 rows	  40.301 ms
+[thread  6 of  8]	block 	 150 rows	  43.566 ms
+[thread  2 of  8]	block 	 150 rows	  86.988 ms
+[thread  5 of  8]	block 	 150 rows	  87.300 ms
+[thread  4 of  8]	block 	 150 rows	 123.656 ms
+[thread  3 of  8]	block 	 150 rows	 124.904 ms
+[mandelbrot thread]:		[124.663] ms
+				(3.80x speedup from 8 threads)
+
+### mode=cyclic threads=4 view=1
+[mandelbrot serial]:		[471.248] ms
+[thread  2 of  4]	cyclic	 300 rows	 125.374 ms
+[thread  3 of  4]	cyclic	 300 rows	 125.499 ms
+[thread  0 of  4]	cyclic	 300 rows	 127.486 ms
+[thread  1 of  4]	cyclic	 300 rows	 129.537 ms
+[thread  2 of  4]	cyclic	 300 rows	 125.676 ms
+[thread  1 of  4]	cyclic	 300 rows	 125.733 ms
+[thread  3 of  4]	cyclic	 300 rows	 135.167 ms
+[thread  0 of  4]	cyclic	 300 rows	 135.318 ms
+[thread  1 of  4]	cyclic	 300 rows	 125.532 ms
+[thread  2 of  4]	cyclic	 300 rows	 125.564 ms
+[thread  3 of  4]	cyclic	 300 rows	 128.677 ms
+[thread  0 of  4]	cyclic	 300 rows	 133.255 ms
+[thread  1 of  4]	cyclic	 300 rows	 124.930 ms
+[thread  2 of  4]	cyclic	 300 rows	 125.210 ms
+[thread  3 of  4]	cyclic	 300 rows	 125.973 ms
+[thread  0 of  4]	cyclic	 300 rows	 129.383 ms
+[thread  1 of  4]	cyclic	 300 rows	 125.771 ms
+[thread  2 of  4]	cyclic	 300 rows	 126.012 ms
+[thread  0 of  4]	cyclic	 300 rows	 131.723 ms
+[thread  3 of  4]	cyclic	 300 rows	 134.139 ms
+[mandelbrot thread]:		[129.491] ms
+				(3.64x speedup from 4 threads)
+
+### mode=cyclic threads=8 view=1
+[mandelbrot serial]:		[475.671] ms
+[thread  1 of  8]	cyclic	 150 rows	  67.178 ms
+[thread  5 of  8]	cyclic	 150 rows	  67.250 ms
+[thread  4 of  8]	cyclic	 150 rows	  67.354 ms
+[thread  2 of  8]	cyclic	 150 rows	  67.420 ms
+[thread  6 of  8]	cyclic	 150 rows	  67.375 ms
+[thread  0 of  8]	cyclic	 150 rows	  67.409 ms
+[thread  7 of  8]	cyclic	 150 rows	  69.875 ms
+[thread  3 of  8]	cyclic	 150 rows	  88.630 ms
+[thread  6 of  8]	cyclic	 150 rows	  66.900 ms
+[thread  1 of  8]	cyclic	 150 rows	  67.159 ms
+[thread  4 of  8]	cyclic	 150 rows	  67.253 ms
+[thread  5 of  8]	cyclic	 150 rows	  67.224 ms
+[thread  2 of  8]	cyclic	 150 rows	  67.326 ms
+[thread  0 of  8]	cyclic	 150 rows	  68.083 ms
+[thread  3 of  8]	cyclic	 150 rows	  98.184 ms
+[thread  7 of  8]	cyclic	 150 rows	  97.422 ms
+[thread  6 of  8]	cyclic	 150 rows	  66.803 ms
+[thread  3 of  8]	cyclic	 150 rows	  67.390 ms
+[thread  4 of  8]	cyclic	 150 rows	  67.494 ms
+[thread  5 of  8]	cyclic	 150 rows	  67.467 ms
+[thread  1 of  8]	cyclic	 150 rows	  67.899 ms
+[thread  2 of  8]	cyclic	 150 rows	  70.127 ms
+[thread  7 of  8]	cyclic	 150 rows	  95.125 ms
+[thread  0 of  8]	cyclic	 150 rows	  99.924 ms
+[thread  1 of  8]	cyclic	 150 rows	  67.298 ms
+[thread  5 of  8]	cyclic	 150 rows	  67.361 ms
+[thread  2 of  8]	cyclic	 150 rows	  67.528 ms
+[thread  4 of  8]	cyclic	 150 rows	  67.556 ms
+[thread  3 of  8]	cyclic	 150 rows	  67.679 ms
+[thread  6 of  8]	cyclic	 150 rows	  67.710 ms
+[thread  7 of  8]	cyclic	 150 rows	  79.270 ms
+[thread  0 of  8]	cyclic	 150 rows	  88.827 ms
+[thread  1 of  8]	cyclic	 150 rows	  67.401 ms
+[thread  5 of  8]	cyclic	 150 rows	  67.387 ms
+[thread  4 of  8]	cyclic	 150 rows	  67.527 ms
+[thread  7 of  8]	cyclic	 150 rows	  67.522 ms
+[thread  0 of  8]	cyclic	 150 rows	  67.649 ms
+[thread  6 of  8]	cyclic	 150 rows	  67.671 ms
+[thread  2 of  8]	cyclic	 150 rows	  68.730 ms
+[thread  3 of  8]	cyclic	 150 rows	  97.116 ms
+[mandelbrot thread]:		[88.991] ms
+				(5.35x speedup from 8 threads)
+

@@ -11,6 +11,7 @@
 #   ./measure.sh sweep    full mode x view x threadcount sweep -> CSV + summary
 #   ./measure.sh threads  per-thread timing evidence for parts 3 and 4
 #   ./measure.sh freq     core clock during serial vs 8-thread phases
+#   ./measure.sh contention  tests whether the 8-thread dip is OS preemption
 #
 set -u
 
@@ -125,9 +126,46 @@ cmd_freq() {
     echo "roughly (1-thread clock / 8-thread clock) before any other effect."
 }
 
+cmd_contention() {
+    # Cyclic gives every thread an identical mix of rows, and at 4 threads the
+    # per-thread times agree to within 3%.  At 8 threads most threads still
+    # land on the same figure but one or two run ~45% long, and it is a
+    # different thread each repetition.  Deterministic work assignment cannot
+    # produce a non-deterministic straggler, so the suspect is the OS: with 8
+    # runnable compute threads on 8 hardware contexts there is no spare
+    # context for the kernel, the shell or the display server, and whichever
+    # compute thread gets descheduled sets the runtime for the whole image.
+    #
+    # Two safe probes.  Neither uses SCHED_FIFO, which on a laptop with 8
+    # CPU-bound threads can starve the desktop.
+    echo "=== involuntary context switches per run (view 1) ==="
+    printf '  %-26s %-10s %s\n' "config" "invol-cs" "thread_ms"
+    for t in 4 7 8 16; do
+        local out ics ms
+        out=$(/usr/bin/time -v $BIN -t "$t" -v 1 2>&1)
+        ics=$(echo "$out" | awk -F: '/Involuntary context switches/{gsub(/ /,"",$2); print $2}')
+        ms=$(echo "$out"  | awk '/mandelbrot thread/ {gsub(/[][]/,"",$(NF-1)); print $(NF-1)}')
+        printf '  %-26s %-10s %s\n' "${t}-thread" "${ics:-n/a}" "${ms:-n/a}"
+    done
+
+    echo
+    echo "=== same configs at highest normal priority (nice -20) ==="
+    echo "If the dip is preemption by normal-priority system work, raising"
+    echo "priority should recover most of it. If the dip is a hardware limit,"
+    echo "nothing changes."
+    printf '  %-26s %-12s %s\n' "config" "normal_ms" "nice-20_ms"
+    for t in 4 7 8 16; do
+        local a b
+        a=$($BIN -t "$t" -v 1 2>/dev/null | awk '/mandelbrot thread/ {gsub(/[][]/,"",$(NF-1)); print $(NF-1)}')
+        b=$(sudo nice -n -20 $BIN -t "$t" -v 1 2>/dev/null | awk '/mandelbrot thread/ {gsub(/[][]/,"",$(NF-1)); print $(NF-1)}')
+        printf '  %-26s %-12s %s\n' "${t}-thread" "${a:-n/a}" "${b:-n/a}"
+    done
+}
+
 case "${1:-sweep}" in
     sweep)   cmd_sweep ;;
     threads) cmd_threads ;;
-    freq)    cmd_freq ;;
-    *) echo "usage: $0 {sweep|threads|freq}" >&2; exit 1 ;;
+    freq)       cmd_freq ;;
+    contention) cmd_contention ;;
+    *) echo "usage: $0 {sweep|threads|freq|contention}" >&2; exit 1 ;;
 esac
