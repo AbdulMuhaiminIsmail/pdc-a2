@@ -13,3 +13,11 @@ kmeans
 myexp
 ispc-*/
 ispc-*.tar.gz
+
+# LaTeX intermediates
+*.aux
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
