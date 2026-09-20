@@ -57,7 +57,7 @@ Physical cores            & 4 \quad ($C = 4$) \\
 Hardware threads          & 8 \quad ($T = 8$) \\
 SMT / Hyper-Threading     & Present, enabled --- 2 threads per core \\
 Base clock                & 2.90\,GHz \\
-Maximum turbo clock       & 3.90\,GHz rated; 3.913\,GHz observed single-threaded \\
+Maximum turbo clock       & 3.90\,GHz rated; 3.908\,GHz highest sampled during execution (Table~\ref{tab:p1clock}) \\
 Widest SIMD unit          & AVX2 --- 256-bit, $W = 8$ single-precision lanes \\
                           & (AVX-512 is \emph{not} present on this part) \\
 RAM size and type         & 16\,GB DDR4-2667 (\texttt{MemTotal} 16\,249\,212\,kB) \\
@@ -96,9 +96,11 @@ that costs.
 \label{sec:protocol}
 %======================================================================
 
-Every number in this report was obtained under the following protocol, which
-is automated in \texttt{measure.sh} so that it is applied identically to
-every configuration.
+Every number in this report was obtained under the following protocol. It is
+automated, one harness per program (\texttt{measure.sh} for Program 1 and
+\texttt{measure\_prog2.sh} through \texttt{measure\_prog6.sh} for the
+others), so that it is applied identically to every configuration within a
+program.
 
 \begin{itemize}
 \item All other applications were closed. Measurements were taken from a
@@ -110,14 +112,22 @@ every configuration.
       (\texttt{sudo cpupower frequency-set -g performance}) and verified by
       reading \texttt{scaling\_governor}.
 \item \textbf{Each configuration was run five times and the minimum is
-      reported.} Note that each invocation of \texttt{./mandelbrot} already
-      takes the best of five internal repetitions, so every reported figure is
-      the best of five best-of-fives, i.e.\ the minimum over 25 executions.
-\item The minimum \emph{and} maximum across the five runs were recorded for
-      every configuration, so the run-to-run spread can be quoted rather than
-      assumed. They are recorded in \texttt{prog1\_summary.csv} and were
-      below 2\% for every configuration except those discussed in
-      Section~\ref{sec:p1sched}.
+      reported.} In Programs 1, 3, 4 and 5 each invocation of the binary
+      already takes the best of several internal repetitions --- five in
+      Program 1, three in the other three --- so those figures are the minimum
+      over 25 and 15 executions respectively.
+\item The minimum \emph{and} maximum across the runs were recorded for every
+      configuration, so the run-to-run spread is quoted rather than assumed.
+      Spread is reported alongside the numbers throughout; it is below 2\% for
+      most configurations but reaches 6--9\% in several, and those cases are
+      identified where they occur rather than averaged away.
+\item \textbf{Two programs deviate, for stated reasons.} Program 2 produces
+      exact instruction counts from a simulator rather than timings, so a
+      single run is exhaustive (Section~\ref{sec:p2what}). Program 6 takes
+      20--50\,s per run, almost all of it inside the timed region, so it uses
+      three repetitions rather than five and runs its comparisons as
+      interleaved rounds (Section~\ref{sec:p6profile}). No other section
+      departs from the five-run rule.
 \item Long sweeps were separated so the machine could return to idle
       temperature between them.
 \end{itemize}
@@ -127,14 +137,15 @@ diagnostic tables are exceptions and are labelled as such: the
 involuntary-context-switch counts in Table~\ref{tab:p1cs} and the core-clock
 samples in Table~\ref{tab:p1clock}. Neither is a timing claim --- the first
 counts scheduler events and the second samples a hardware register --- and
-neither is used to support a speedup number. Every speedup, runtime and
-efficiency quoted below is the minimum of five runs.
+neither is used to support a speedup number. These two are also the only
+tables in this report transcribed by hand rather than generated.
 
-The raw per-execution data is committed as
-\texttt{prog1\_raw.csv} (160 rows for the
-normal-priority sweep), and every table and figure below is generated from
-those files by \texttt{make\_tables.py} and \texttt{plot\_prog1.py} rather
-than transcribed by hand.
+Every other table and figure is produced by a script from a committed CSV
+(\texttt{plot\_prog1.py} and \texttt{make\_tables.py} for Program 1, and
+the corresponding \texttt{plot\_prog\emph{N}.py} for the rest), so no
+number below was copied by hand from a terminal. The raw per-execution data
+is committed alongside: \texttt{prog1\_raw.csv} holds 160 rows for the
+normal-priority sweep, and each later program commits its own equivalent.
 
 %======================================================================
 \section{Build Notes}
@@ -210,6 +221,19 @@ particular value of $T$.
 \label{fig:p1v1}
 \end{figure}
 
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\textwidth]{prog1_speedup_view2.png}
+\caption{The same sweep on view~2. The ordering is the same --- block below
+row-cyclic at every thread count, row-cyclic close to ideal through four
+threads and falling away after --- but the three-thread collapse is absent,
+because view~2's cost is not concentrated into a single block at that thread
+count. Note also that block and row-cyclic nearly converge at sixteen threads
+($5.94\times$ against $6.06\times$), which is the finer-blocks effect
+discussed in Section~\ref{sec:p1part3}.}
+\label{fig:p1v2}
+\end{figure}
+
 Speedup under block decomposition is emphatically \textbf{not} linear. Its
 efficiency falls from 0.96 at two threads to below 0.60 everywhere
 afterwards, and the curve is not even monotonic.
@@ -247,6 +271,7 @@ zoomed view with a different cost distribution, and its three-thread point
 not concentrated into a single block at that thread count.
 
 \subsection{Part 3: per-thread timing confirms the hypothesis}
+\label{sec:p1part3}
 
 \texttt{CycleTimer} instrumentation was added at the entry and exit of
 \texttt{workerThreadStart()}. It is gated behind the
@@ -290,9 +315,17 @@ The decisive detail is the total. At eight threads the program reports
 \ms{124.4}. \textbf{The runtime of a parallel region is the time of its
 slowest thread, not the average of its threads.} Seven threads finishing early
 contributes nothing; they simply wait at the join. This is why block
-decomposition cannot exceed roughly $3.8\times$ no matter how many threads are
-added, and why the speedup curve tracks the maximum per-thread time rather
+decomposition stalls at roughly $3.8\times$ once it has one thread per hardware
+context, and why the speedup curve tracks the maximum per-thread time rather
 than the total work divided by $T$.
+
+Table~\ref{tab:p1v1} shows block reaching $5.85\times$ at sixteen threads,
+which is not a counter-example but the same mechanism read backwards. Doubling
+the thread count halves the height of every block, so the densest block --- and
+with it the slowest thread --- carries a smaller share of the total. Making the
+units finer is what improves block decomposition, and it is the same lever
+Program~3 pulls deliberately by launching far more tasks than there are
+contexts.
 
 \subsection{Part 4: row-cyclic decomposition}
 
@@ -307,8 +340,11 @@ the same proportion. No communication, no synchronisation, no dynamic work
 queue, and the same rule at every thread count.
 
 The result is immediate. At four threads the per-thread times become
-\ms{125.4}, \ms{125.5}, \ms{127.5} and \ms{129.5} --- a spread of
-$1.0\times$ against block's $4.2\times$ (Figure~\ref{fig:p1bal4}). The
+\ms{124.9}, \ms{125.2}, \ms{126.0} and \ms{129.4} --- a spread of
+$1.0\times$ against block's $4.2\times$ (Table~\ref{tab:p1balance},
+Figure~\ref{fig:p1bal4}). As everywhere in this section these come from the
+repetition that set the reported minimum, which is why they match
+Table~\ref{tab:p1balance} rather than any other run. The
 three-thread point rises from 1.62$\times$ to 2.85$\times$, a $1.76\times$
 improvement obtained by executing exactly the same instructions on exactly the
 same hardware, changing only which thread runs which row.
@@ -502,6 +538,7 @@ contexts, not a property of the algorithm.
 %======================================================================
 
 \subsection{What is being measured}
+\label{sec:p2what}
 
 This program uses the CS149 ``fake'' vector intrinsics, which simulate a SIMD
 unit rather than compiling to real AVX2 instructions. Consequently
@@ -723,7 +760,16 @@ this stage.
 \label{tab:p3simd}
 \end{table}
 
-The measured $5.12\times$ is \textbf{64\% of the ideal $8\times$}.
+The measured $\progThreeSimdViewOne\times$ is
+\textbf{\progThreeSimdViewOnePct\% of the ideal $8\times$}.
+
+Every invocation of the sweep re-measures the serial and the
+ISPC-without-tasks times alongside the task time, so each task count in
+Table~\ref{tab:p3sweep1} carries its own baselines. The figures quoted
+here and in Table~\ref{tab:p3simd} all come from the 200-task invocation,
+the configuration whose result is reported below, so that the SIMD and
+multi-core factors multiply back to exactly the total speedup rather than
+approximately.
 
 \paragraph{Why less than $8\times$?} The same mechanism as Program~2:
 \emph{divergence}. A gang covers eight horizontally adjacent pixels, and
@@ -736,7 +782,8 @@ Only gangs entirely inside or entirely outside the set are efficient.
 
 \paragraph{The view comparison confirms it.} The handout suggests comparing
 views to test this hypothesis, and the comparison is decisive. View~2 achieves
-$4.32\times$ against view~1's $5.12\times$ --- \textbf{16\% worse}. View~2 is a
+$\progThreeSimdViewTwo\times$ against view~1's
+$\progThreeSimdViewOne\times$ --- \textbf{\progThreeViewGap\% worse}. View~2 is a
 deep zoom into the set's boundary, where the structure is finely filamentary
 and neighbouring pixels frequently disagree about iteration count. View~1
 contains large uniform regions --- the black interior and the empty margins ---
@@ -1070,12 +1117,29 @@ and how a vector iteration compares in cost to a scalar one.
 \progFourModel
 \caption{The divergence ratio is computed from the input data alone; the cost
          ratio is derived by dividing measured time by iteration count. Their
-         product reproduces every measured speedup to two decimal places.}
+         product is therefore an identity that returns the measured speedup;
+         the divergence ratio alone is the part known in advance.}
 \label{tab:p4model}
 \end{table}
 
-The model is not approximate --- it reproduces $4.42$, $6.50$ and $0.89$
-exactly. The cost ratio also explains why the best case reaches $6.50\times$
+One thing must be said plainly about this decomposition: the right-hand
+product is an algebraic identity, not a prediction that could have failed. The
+cost ratio is obtained by dividing measured time by iteration count, so
+multiplying it back by the divergence ratio necessarily returns the measured
+speedup. That the final two columns of Table~\ref{tab:p4model} agree is
+arithmetic, not evidence.
+
+What \emph{is} evidence is the divergence ratio itself. It is computed from
+the input array alone, before any timing, and it is what the speedup would be
+if a gang iteration cost exactly what a scalar iteration costs. Comparing it
+against the measurement is therefore a real test, and the residual --- the cost
+ratio --- is the quantity worth reading: $0.967$, $0.813$ and $0.887$ across
+the three inputs. Those numbers are not free parameters fitted per input; they
+are close to one another because they measure the same hardware property, and
+their spread is what tells us the per-iteration cost is not quite identical
+between the scalar and vector loops.
+
+The cost ratio also explains why the best case reaches $6.50\times$
 rather than the full $8.00\times$: an ISPC gang iteration takes $5.61$\,ns
 against a scalar iteration's $4.56$\,ns, so eight lanes are processed in the
 time of $1.23$ scalar iterations rather than one, and
@@ -1213,9 +1277,10 @@ This is not measurement noise. The single-core ISPC time was
 \ms{\prognFiveShippedTaskMs}; the task version was slower in four of the five
 paired runs. It is also not a small effect hiding inside a large spread: the
 run-to-run spreads were \prognFiveIspcSpread\% and \prognFiveTaskSpread\%, and
-the gap between the two minima is larger than either. Every other program in
-this assignment gained between $5.2\times$ and $6.3\times$ from the same eight
-hardware contexts. Here they buy nothing.
+the gap between the two minima is larger than either. Programs~1, 3 and~4 each gained between
+$5.8\times$ and $6.7\times$ from the same eight hardware contexts. Here they
+buy nothing. (Program~6 gains less, $\prognSixSThread\times$, but for an
+unrelated reason: it is bounded by a serial fraction, not by memory.)
 
 \subsection{Why: the ratio of arithmetic to memory traffic}
 
@@ -1309,11 +1374,17 @@ parameter and swept over the range 1--256
 \prognFiveTableTasks
  The best count was
 \prognFiveTaskBestN{} at \ms{\prognFiveTaskBestMs} and the worst was
-\ms{\prognFiveTaskWorstMs}, a total range of \prognFiveTaskRange\%, and the
-trend is monotone in the wrong direction --- \emph{fewer} tasks is faster, with
-one task fastest of all. There is no granularity at which tasks win. This also
-rules out load imbalance as a contributor, which was the dominant effect in
-Program~3.
+\ms{\prognFiveTaskWorstMs}, a total range of \prognFiveTaskRange\%.
+
+The shape is not a smooth decline and should not be described as one. Time
+rises steadily from one task to eight --- that is, performance gets worse as
+the work is spread across more contexts --- and from eight tasks to 256 it is
+flat to within 3.5\%, wandering without trend. The two facts together are the
+point: the damage is done by the time every context is busy, and subdividing
+further neither helps nor hurts. There is no granularity at which tasks win.
+This also rules out load imbalance as a contributor, which was the dominant
+effect in Program~3: if imbalance mattered, more tasks would help, and past
+eight they do nothing at all.
 
 \begin{figure}[H]
 \centering
@@ -1347,7 +1418,7 @@ the single-threaded version does not pay.
 \textbf{Near-linear speedup: no.} Not by any rewrite. A kernel's execution time
 cannot fall below $(\text{bytes moved}) / (\text{achievable bandwidth})$, and
 neither term depends on how many cores run it. The bytes are fixed by the
-problem statement --- $N$ elements must be read and $N$ written --- and the
+problem statement --- $2N$ elements must be read and $N$ written --- and the
 bandwidth is a property of one DDR4-2667 channel. Linear speedup in $T$ would
 require bandwidth to grow with $T$, and on this machine it does not grow at
 all: a single core already draws \prognFiveBestFrac\% of what the module can supply, so there
@@ -1391,7 +1462,9 @@ traffic per element is therefore one read of $X$, one read of $Y$, one
 read-for-ownership of \texttt{result}, and one writeback of \texttt{result}:
 four floats, of which the third is pure waste.
 
-This explanation is testable, and two independent tests confirm it.
+This explanation is testable, and three independent tests confirm it: one
+from timing, one from a number the model renders impossible, and one that
+reads the traffic off the memory controller.
 
 \paragraph{Test 1: remove the read-for-ownership and see if the time drops by
 the predicted amount.} \texttt{\_mm256\_stream\_ps} issues a non-temporal
@@ -1403,8 +1476,19 @@ $\prognFiveNtGain\times$, which is \prognFiveNtAccuracy\% of the prediction.
 A change that touches only how the results are written, and nothing about the
 arithmetic or the reads, recovered almost exactly one quarter of the runtime.
 
-\paragraph{Test 3: read the memory controller directly.} The two tests above
-are inferences from timing. The integrated memory controller exposes counters
+\paragraph{Test 2: a reported number that is physically impossible.}
+\texttt{toBW} hard-codes the $4N$ assumption. Applied to the non-temporal
+variant it reports \prognFiveNtReported\,GiB/s --- above the
+\prognFivePeakGiBs\,GiB/s that a single DDR4-2667 channel can physically
+transfer. No kernel can exceed its own memory bus, so the only possible
+conclusion is that this kernel is not moving $4N$ bytes. That is precisely the
+claim. The formula is right for the shipped code and wrong for the
+non-temporal version, which is the cleanest demonstration that the fourth $N$
+is the read-for-ownership and not something intrinsic to \texttt{saxpy}.
+
+\paragraph{Test 3: read the memory controller directly.} Both tests above
+are indirect --- one infers the traffic from a time, the other from a number
+that cannot be true. The integrated memory controller exposes counters
 (\texttt{uncore\_imc/data\_reads} and \texttt{data\_writes}) that report actual
 DRAM traffic, so the claim can be checked rather than deduced. Two corrections
 are needed to use them: allocation, initialisation and verification each touch
@@ -1434,16 +1518,6 @@ rather than adjusted or dropped. The comparison the extra-credit question turns
 on --- \texttt{avx2\_store} against \texttt{avx2\_stream}, two kernels
 differing in one instruction and measured identically --- is unaffected by it.
 \fi
-
-\paragraph{Test 2: a reported number that is physically impossible.}
-\texttt{toBW} hard-codes the $4N$ assumption. Applied to the non-temporal
-variant it reports \prognFiveNtReported\,GiB/s --- above the
-\prognFivePeakGiBs\,GiB/s that a single DDR4-2667 channel can physically
-transfer. No kernel can exceed its own memory bus, so the only possible
-conclusion is that this kernel is not moving $4N$ bytes. That is precisely the
-claim. The formula is right for the shipped code and wrong for the
-non-temporal version, which is the cleanest demonstration that the fourth $N$
-is the read-for-ownership and not something intrinsic to \texttt{saxpy}.
 
 \subsection{Extra credit: improving \texttt{saxpy}}
 \label{sec:prog5ec2}
@@ -1495,7 +1569,7 @@ Achieved bandwidth            & $\prognFiveBestDram$\,GB/s & $\prognFiveBestFrac
 FP units utilised             & $\prognFiveGflopsFrac\%$ of \prognFivePeakGflops\,GFLOPS & $I = \prognFiveIntensity$ vs ridge $\prognFiveRidge$ \\
 Near-linear speedup possible? & \textbf{No} & Bandwidth does not scale with $T$ \\
 Substantially improvable?     & Yes, $\prognFiveNtGain\times$ & Move $3N$ instead of $4N$ \\
-Why the $4\times$ multiplier? & Read-for-ownership & Confirmed two ways \\
+Why the $4\times$ multiplier? & Read-for-ownership & Confirmed three ways \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1537,6 +1611,7 @@ problem, and that choice has to be made on evidence rather than intuition.
 size.
 
 \subsection{Step 1: measure before changing anything}
+\label{sec:p6profile}
 
 \texttt{CycleTimer} probes were placed around the three phases inside the main
 loop, accumulating per-phase totals across the whole run and printing them when
@@ -1582,11 +1657,18 @@ $N = 100$ additions at roughly four cycles of latency each: about 400 cycles,
 and the arithmetic units sit idle between links. At $3\times 10^{6}$ calls per
 iteration that predicts roughly $1.2\times10^{9}$ cycles, or \ms{310} at the
 $3.881$\,GHz single-thread turbo recorded in Table~\ref{tab:p1clock}. The
-measured cost is \ms{340.7} per iteration --- about 10\% above the estimate,
-which is what one expects when the clock cannot hold peak turbo through a
-fifty-second run. A model this simple landing that close is good evidence that
-the dependency chain, and not memory or anything else, is what sets the
-cost.
+measured cost is \ms{\prognSixAssignOrigIter} per iteration, about 10\%
+above the estimate. A model this simple landing that close establishes the
+dominant term: the phase is limited by the latency of a serial chain of
+floating-point additions rather than by throughput.
+
+It does not establish that the chain is the \emph{only} term, and it is not.
+Section~\ref{sec:p6interchange} shows that roughly
+\ms{\prognSixInterchangeSaved} of that \ms{\prognSixAssignOrigIter} is
+memory traffic rather than dependency latency: it disappears when the loop
+order changes, while the chain inside \texttt{dist} stays exactly as it was.
+The estimate is best read as accounting for the bulk of the cost, not all of
+it.
 
 This matters because it tells us the phase is \emph{latency}-bound, not
 bandwidth-bound. Latency-bound work is exactly the kind that parallelism
@@ -1648,6 +1730,7 @@ problem has. $K = 3$ and $M = 10^{6}$ are both available; only one of them is
 larger than the machine.
 
 \subsection{Step 4: parallelising over data points}
+\label{sec:p6interchange}
 
 The fix inverts the loops. Instead of \emph{for each centroid, scan every
 point}, the code does \emph{for each point, compare against every centroid}:
@@ -1687,6 +1770,20 @@ Given what Program~5 established about this machine's memory system, this part
 is not incidental: the original ordering moves $K \times \prognSixDataMB$\,MB per
 iteration, which at the \prognFiveBestDram\,GB/s measured in Program~5 would
 alone cost \ms{\prognSixOrigTrafficMs}.
+
+This can be checked rather than asserted, and doing so closes the loose end
+left in Section~\ref{sec:p6profile}. Running the interchanged code on a single
+thread isolates the reordering from the threading:
+\texttt{computeAssignments} falls from \ms{\prognSixAssignOrigIter} to
+\ms{\prognSixAssignOneIter} per iteration, a saving of
+\ms{\prognSixInterchangeSaved}. The same number of \texttt{dist} calls is
+made either way and the dependency chain inside each is untouched, so the
+saving can only be the $(K-1)$ extra passes over the data array that the
+original made --- 1.6\,GB per iteration. That implies
+$1.6\,\text{GB} / \prognSixInterchangeSaved\,\text{ms} =
+\prognSixInterchangeGBs$\,GB/s, against the \prognFiveBestDram\,GB/s
+Program~5 measured by an entirely different method on the same machine. Two
+programs, two kernels, one memory system.
 \end{enumerate}
 
 \paragraph{Size of the change.} The handout estimates its own solution at
@@ -1761,6 +1858,13 @@ contributes a further $\prognSixParallelOnly\times$, and
 $\prognSixOneThreadSpeedup \times \prognSixParallelOnly = \prognSixSpeedup$.
 Neither change would have reached the $2.1\times$ target by itself.
 
+That middle factor is quoted against Table~\ref{tab:prog6-variants}'s
+eight-thread time, so that the product returns the headline figure. Measured
+entirely within the sweep --- its own $T=1$ against its own $T=8$ --- the same
+quantity is $\prognSixSThread\times$, differing by the 3\% noted below. The
+Karp--Flatt calculation in Section~\ref{sec:p6karp} uses that second form,
+because it compares two endpoints of a single experiment.
+
 One inconsistency is worth stating rather than hiding: the sweep's best
 eight-thread run, \ms{\prognSixSweepBestMs}, is about 3\% faster than the
 \ms{\prognSixFinalMs} recorded in Table~\ref{tab:prog6-variants} for the same
@@ -1782,6 +1886,7 @@ function's semantics. So $\prognSixSpeedup\times$ is close to the constrained
 optimum, and the constraint, not the machine, is what now binds.
 
 \subsection{Cross-check: the Karp--Flatt metric}
+\label{sec:p6karp}
 
 Amdahl's Law says what a given serial fraction permits. The Karp--Flatt metric
 runs the inference backwards: given a measured speedup $S$ on $T$ threads, the

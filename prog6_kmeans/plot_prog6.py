@@ -163,6 +163,10 @@ if byk_prof:
     A(r"\newcommand{\prognSixByKDrift}{" + fmt(100 * (untouched - 1), 0) + "}")
     A(r"\newcommand{\prognSixByKAssignGainAdj}{"
       + fmt(S["computeAssignments"] / B["computeAssignments"] / untouched, 2) + "}")
+M_POINTS, N_DIMS, K_CLUSTERS = 1_000_000, 100, 3
+DATA_BYTES = M_POINTS * N_DIMS * 8
+MEASURED_GBS = 18.176          # Program 5, best sustained DRAM bandwidth
+
 # --- Karp-Flatt -----------------------------------------------------------
 # e = (1/S - 1/T) / (1 - 1/T): the serial fraction implied by a measured
 # speedup. Comparing it against the f measured directly from the profile
@@ -190,14 +194,27 @@ if t1 and sweep:
     A(r"\newcommand{\prognSixKFFixedGap}{" + fmt(kf_fixed - (1 - f_t1), 3) + "}")
 A("")
 
+# The loop interchange removes (K-1) passes over the data array. At T = 1 the
+# whole of its benefit is visible, so the implied bandwidth can be compared
+# against what Program 5 measured on this machine -- a cross-check between two
+# independent programs.
+if t1:
+    orig_iter = S["computeAssignments"] / ITERS
+    one_iter = T1["computeAssignments"] / ITERS
+    saved_ms = orig_iter - one_iter
+    bytes_saved = (K_CLUSTERS - 1) * DATA_BYTES
+    implied_gbs = bytes_saved / (saved_ms / 1000.0) / 1e9
+    A(r"\newcommand{\prognSixAssignOrigIter}{" + fmt(orig_iter, 1) + "}")
+    A(r"\newcommand{\prognSixAssignOneIter}{" + fmt(one_iter, 1) + "}")
+    A(r"\newcommand{\prognSixInterchangeSaved}{" + fmt(saved_ms, 1) + "}")
+    A(r"\newcommand{\prognSixInterchangeGBs}{" + fmt(implied_gbs, 1) + "}")
+    A("")
+
 A(r"\newcommand{\prognSixTargetFrac}{" + fmt(100 * 2.1 / S_MAX, 1) + "}")
 
 # Memory traffic of the ORIGINAL loop order: the data array is M*N doubles and
 # the k-outer ordering streams all of it once per centroid. Compared against
 # the bandwidth Program 5 measured on this machine.
-M_POINTS, N_DIMS, K_CLUSTERS = 1_000_000, 100, 3
-DATA_BYTES = M_POINTS * N_DIMS * 8
-MEASURED_GBS = 18.176          # Program 5, best sustained DRAM bandwidth
 orig_traffic_ms = K_CLUSTERS * DATA_BYTES / (MEASURED_GBS * 1e9) * 1000
 A(r"\newcommand{\prognSixDataMB}{" + fmt(DATA_BYTES / 1e6, 0) + "}")
 A(r"\newcommand{\prognSixOrigTrafficMs}{" + fmt(orig_traffic_ms, 0) + "}")
