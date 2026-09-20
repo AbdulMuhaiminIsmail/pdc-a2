@@ -107,3 +107,23 @@ Tasks & ms & Reported GiB/s \\\midrule
 \newcommand{\prognFiveTaskWorstMs}{20.117}
 \newcommand{\prognFiveTaskRange}{14.3}
 
+\newcommand{\prognFiveTablePerf}{%
+\begin{table}[H]\centering
+\caption{DRAM traffic measured at the memory controller (\texttt{uncore\_imc}) per call: differential over repetitions, with the idle background rate subtracted. One array is 76.3\,MiB.}
+\label{tab:prog5-perf}
+\begin{tabular}{lrrrrr}\toprule
+Kernel & Reads & Writes & Total & Floats per & Model \\
+& (MiB) & (MiB) & (MiB) & element & \\\midrule
+\texttt{serial} & 239.5 & 75.0 & 314.5 & 4.12 & $4N$ \\
+\texttt{ispc} & 200.2 & 64.4 & 264.5 & 3.47 & $4N$ \\
+\texttt{avx2\_store} & 235.8 & 78.7 & 314.4 & 4.12 & $4N$ \\
+\texttt{avx2\_stream} & 141.2 & 70.6 & 211.9 & 2.78 & $3N$ \\
+\bottomrule\end{tabular}\end{table}
+}
+
+\newcommand{\prognFivePerfReadDrop}{94.6}
+\newcommand{\prognFivePerfOneArray}{76.3}
+\newcommand{\prognFivePerfDropFrac}{124.0}
+\newcommand{\prognFivePerfStoreFpe}{4.12}
+\newcommand{\prognFivePerfStreamFpe}{2.78}
+

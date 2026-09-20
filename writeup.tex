@@ -1403,8 +1403,36 @@ $\prognFiveNtGain\times$, which is \prognFiveNtAccuracy\% of the prediction.
 A change that touches only how the results are written, and nothing about the
 arithmetic or the reads, recovered almost exactly one quarter of the runtime.
 
+\paragraph{Test 3: read the memory controller directly.} The two tests above
+are inferences from timing. The integrated memory controller exposes counters
+(\texttt{uncore\_imc/data\_reads} and \texttt{data\_writes}) that report actual
+DRAM traffic, so the claim can be checked rather than deduced. Two corrections
+are needed to use them: allocation, initialisation and verification each touch
+memory once, so each kernel is run with 1 and with 21 repetitions and the
+difference divided by 20; and the counters are system-wide --- the controller
+cannot attribute a transfer to a process --- so the idle rate is sampled
+separately and subtracted in proportion to elapsed time.
+
 \ifdefined\prognFiveTablePerf
 \prognFiveTablePerf
+
+The ordinary-store kernel moves $\prognFivePerfStoreFpe$ floats per element
+against a predicted $4$, and the non-temporal kernel
+$\prognFivePerfStreamFpe$ against a predicted $3$ --- within 3\% and 7\% of the
+model. The writes column is the sharper result: the ordinary-store kernel
+writes $78.7$\,MiB per call, essentially exactly the
+\prognFivePerfOneArray\,MiB of one array, which is what the $4N$ model requires
+and what a first, faulty version of this measurement failed to show. The read
+column falls by \prognFivePerfReadDrop\,MiB between the two strategies,
+against a predicted drop of one array.
+
+One row does not fit. The ISPC kernel reports $3.47$ floats per element where
+$4$ is expected, despite issuing the same ordinary stores as the AVX2 kernel
+that reports $\prognFivePerfStoreFpe$ and despite being slower than the
+non-temporal version. This is not explained here, and it is left as measured
+rather than adjusted or dropped. The comparison the extra-credit question turns
+on --- \texttt{avx2\_store} against \texttt{avx2\_stream}, two kernels
+differing in one instruction and measured identically --- is unaffected by it.
 \fi
 
 \paragraph{Test 2: a reported number that is physically impossible.}
@@ -1753,6 +1781,50 @@ dependency chain --- is ruled out by the instruction not to change that
 function's semantics. So $\prognSixSpeedup\times$ is close to the constrained
 optimum, and the constraint, not the machine, is what now binds.
 
+\subsection{Cross-check: the Karp--Flatt metric}
+
+Amdahl's Law says what a given serial fraction permits. The Karp--Flatt metric
+runs the inference backwards: given a measured speedup $S$ on $T$ threads, the
+\emph{experimentally determined} serial fraction is
+
+\[
+e = \frac{\dfrac{1}{S} - \dfrac{1}{T}}{1 - \dfrac{1}{T}} .
+\]
+
+If $e$ matches the $f$ measured directly from the profile, the only thing
+limiting the program is the serial fraction. If $e$ is larger, the excess is
+parallel overhead that the profile did not see.
+
+Applied to the headline result, $S = \prognSixSpeedup$ at $T = 8$ gives
+$e = \prognSixKFNaive$, against a directly measured serial fraction of
+$1 - f = \prognSixSerialFrac$. The two disagree by $\prognSixKFNaiveGap$.
+
+That disagreement is worth taking apart, because it is \emph{smaller} than it
+should be. Karp--Flatt assumes the serial and parallel versions do the same
+work, and ours do not --- the loop interchange removed work, which inflates $S$
+and therefore flatters $e$. Isolating the threading gives the honest figure.
+Against the interchanged code running on one thread, whose own profile puts
+$f = \prognSixFOne$ in \texttt{computeAssignments}, eight threads deliver
+$S = \prognSixSThread$, so
+
+\[
+e = \prognSixKFFixed \quad\text{against}\quad 1 - f = \prognSixSerialFracOne ,
+\]
+
+a gap of $\prognSixKFFixedGap$ rather than $\prognSixKFNaiveGap$. So there is
+real parallel overhead --- roughly six points of apparent serial fraction ---
+and the naive application of the metric \emph{understated} it by about half.
+The overhead is of the expected kind: thread creation and join on every one of
+the \prognSixIters{} iterations, four of the eight contexts being SMT siblings
+rather than physical cores, and the loss of turbo headroom at full occupancy
+measured in Table~\ref{tab:p1clock}.
+
+The two metrics answer different questions. Amdahl's Law bounded what was worth
+attempting before any code was written. Karp--Flatt says how much of the
+shortfall against that bound is overhead rather than structure --- but only if
+the comparison holds the work fixed, which is exactly the assumption an
+optimisation like the loop interchange breaks.
+
 \subsection{Correctness}
 
 Three independent checks, since a faster wrong answer is worthless:
@@ -1814,5 +1886,45 @@ $\prognSixSmax\times$ on the table before any code was written. It is also the
 clearest illustration in this assignment that the bound moves: having removed
 the original bottleneck, the program is now limited by a phase the rules do not
 allow us to touch.
+
+
+%======================================================================
+\section{Extra Credit}
+\label{sec:extra}
+%======================================================================
+
+All extra-credit work is described in the section named against it below.
+Copies of the code are collected in \texttt{extra/} in the repository, indexed
+by \texttt{extra/README.md}; the authoritative versions live in their program
+directories, since that is where they build.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{clp{5.4cm}l}
+\toprule
+\# & Prog. & Item & Result \\
+\midrule
+1 & 2 & Vectorised array sum in $O(N/W + \log W)$ &
+    $N/W + 2\log_2 W$ ops \\
+2 & 3 & \texttt{std::thread} create/join cost against ISPC tasks &
+    Explains the task result \\
+3 & 4 & Hand-written AVX2 \texttt{sqrt} &
+    Beats ISPC on all inputs \\
+4 & 5 & Why \texttt{TOTAL\_BYTES} multiplies by four (1 point) &
+    Read-for-ownership \\
+5 & 5 & Improving \texttt{saxpy} &
+    $\prognFiveNtGain\times$ on one core \\
+6 & 5 & DRAM traffic from the memory controller &
+    Confirms item 4 directly \\
+\bottomrule
+\end{tabular}
+\caption{Extra-credit items attempted. \texttt{extra/README.md} maps each to
+its source file and to its section of this document.}
+\end{table}
+
+Item 4 is the one the handout assigns a point to. Items 5 and 6 exist to
+support it: item 5 shows that removing the read-for-ownership produces the
+speedup the model predicts, and item 6 reads the traffic off the memory
+controller so that the answer rests on a measurement rather than an inference.
 
 \end{document}

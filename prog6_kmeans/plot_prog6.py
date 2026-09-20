@@ -163,6 +163,33 @@ if byk_prof:
     A(r"\newcommand{\prognSixByKDrift}{" + fmt(100 * (untouched - 1), 0) + "}")
     A(r"\newcommand{\prognSixByKAssignGainAdj}{"
       + fmt(S["computeAssignments"] / B["computeAssignments"] / untouched, 2) + "}")
+# --- Karp-Flatt -----------------------------------------------------------
+# e = (1/S - 1/T) / (1 - 1/T): the serial fraction implied by a measured
+# speedup. Comparing it against the f measured directly from the profile
+# exposes parallel overhead that Amdahl's Law alone does not show.
+def karp_flatt(S, T):
+    return (1.0 / S - 1.0 / T) / (1.0 - 1.0 / T)
+
+kf_naive = karp_flatt(speedup, HW_THREADS)
+A(r"\newcommand{\prognSixKFNaive}{" + fmt(kf_naive, 3) + "}")
+A(r"\newcommand{\prognSixKFNaiveGap}{" + fmt(kf_naive - (1 - f), 3) + "}")
+
+t1 = read_csv("prog6_profile_t1.csv")
+if t1 and sweep:
+    T1 = phase_map(t1)
+    t1_total = sum(T1.values())
+    f_t1 = T1["computeAssignments"] / t1_total
+    one_ms = next(r["ms"] for r in sweep if r["threads"] == 1)
+    eight_ms = min(r["ms"] for r in sweep)
+    s_thread = one_ms / eight_ms
+    kf_fixed = karp_flatt(s_thread, HW_THREADS)
+    A(r"\newcommand{\prognSixFOne}{" + fmt(f_t1, 3) + "}")
+    A(r"\newcommand{\prognSixSerialFracOne}{" + fmt(1 - f_t1, 3) + "}")
+    A(r"\newcommand{\prognSixSThread}{" + fmt(s_thread, 3) + "}")
+    A(r"\newcommand{\prognSixKFFixed}{" + fmt(kf_fixed, 3) + "}")
+    A(r"\newcommand{\prognSixKFFixedGap}{" + fmt(kf_fixed - (1 - f_t1), 3) + "}")
+A("")
+
 A(r"\newcommand{\prognSixTargetFrac}{" + fmt(100 * 2.1 / S_MAX, 1) + "}")
 
 # Memory traffic of the ORIGINAL loop order: the data array is M*N doubles and
