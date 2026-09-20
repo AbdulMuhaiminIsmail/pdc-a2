@@ -145,7 +145,9 @@ int main(int argc, char** argv) {
     // Single-variant mode. perf counts everything the process does, so to
     // attribute DRAM traffic to one kernel the process must run only that
     // kernel. In this mode the arrays are still initialised and verified, but
-    // the counted region is entered exactly `runs` times by one variant.
+    // the counted region is entered exactly `runs` times by one variant, and
+    // the per-repetition memset is suppressed -- clearing 76 MiB between
+    // repetitions is real DRAM traffic and would be attributed to saxpy.
     const char* onlyVariant = (argc > 3) ? argv[3] : NULL;
     const int onlyThreads = (argc > 4) ? atoi(argv[4]) : 1;
 
@@ -173,8 +175,9 @@ int main(int argc, char** argv) {
     for (int r = 0; r < 3; ++r) {
         if (onlyVariant && strcmp(onlyVariant, refs[r].name) != 0) continue;
         double best = 1e30;
+        if (onlyVariant) memset(out, 0, (size_t)N * sizeof(float));
         for (int k = 0; k < runs; ++k) {
-            memset(out, 0, (size_t)N * sizeof(float));
+            if (!onlyVariant) memset(out, 0, (size_t)N * sizeof(float));
             double t0 = CycleTimer::currentSeconds();
             if (refs[r].kind == 0)      saxpySerial(N, SCALE, X, Y, out);
             else if (refs[r].kind == 1) ispc::saxpy_ispc(N, SCALE, X, Y, out);
@@ -204,8 +207,9 @@ int main(int argc, char** argv) {
             int T = threadCounts[c];
             if (onlyVariant && T != onlyThreads) continue;
             double best = 1e30;
+            if (onlyVariant) memset(out, 0, (size_t)N * sizeof(float));
             for (int k = 0; k < runs; ++k) {
-                memset(out, 0, (size_t)N * sizeof(float));
+                if (!onlyVariant) memset(out, 0, (size_t)N * sizeof(float));
                 double t0 = CycleTimer::currentSeconds();
                 runThreaded(fn, T, SCALE, X, Y, out);
                 double t1 = CycleTimer::currentSeconds();

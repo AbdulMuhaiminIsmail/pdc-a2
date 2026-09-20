@@ -322,21 +322,35 @@ if sweep:
 
 # --- perf counters, if the elevated run was done --------------------------
 perf = read_csv("prog5_perf_traffic.csv")
-if perf:
+if perf and "predicted" in perf[0]:
+    one_mib = N * 4 / 1024 / 1024
     T(r"\begin{table}[H]\centering")
     T(r"\caption{DRAM traffic measured at the memory controller "
-      r"(\texttt{uncore\_imc}), per call, differential over ten repetitions. "
-      r"One array is 76.3\,MiB, so $4N$ floats is 305.2\,MiB.}")
+      r"(\texttt{uncore\_imc}) per call: differential over repetitions, with "
+      r"the idle background rate subtracted. One array is "
+      + fmt(one_mib, 1) + r"\,MiB.}")
     T(r"\label{tab:prog5-perf}")
-    T(r"\begin{tabular}{lrrrr}\toprule")
-    T(r"Kernel & Reads (MiB) & Writes (MiB) & Total (MiB) "
-      r"& Floats per element \\\midrule")
+    T(r"\begin{tabular}{lrrrrr}\toprule")
+    T(r"Kernel & Reads & Writes & Total & Floats per & Model \\")
+    T(r"& (MiB) & (MiB) & (MiB) & element & \\\midrule")
     for r in perf:
-        T(f"{r['variant'].replace('_', chr(92)+'_')} & {r['reads_mib']} & "
-          f"{r['writes_mib']} & {r['total_mib']} & {r['floats_per_elem']} \\\\")
+        T(f"\\texttt{{{r['variant'].replace('_', chr(92)+'_')}}} & "
+          f"{r['reads_mib']} & {r['writes_mib']} & {r['total_mib']} & "
+          f"{r['floats_per_elem']} & ${r['predicted']}N$ \\\\")
     T(r"\bottomrule\end{tabular}\end{table}")
     endtable(r"\prognFiveTablePerf")
-    A("")
+
+    st_row = next((r for r in perf if r["variant"] == "avx2_store"), None)
+    nt_row = next((r for r in perf if r["variant"] == "avx2_stream"), None)
+    if st_row and nt_row:
+        drop = float(st_row["reads_mib"]) - float(nt_row["reads_mib"])
+        A(r"\newcommand{\prognFivePerfReadDrop}{" + fmt(drop, 1) + "}")
+        A(r"\newcommand{\prognFivePerfOneArray}{" + fmt(one_mib, 1) + "}")
+        A(r"\newcommand{\prognFivePerfDropFrac}{"
+          + fmt(100 * drop / one_mib, 1) + "}")
+        A(r"\newcommand{\prognFivePerfStoreFpe}{" + st_row["floats_per_elem"] + "}")
+        A(r"\newcommand{\prognFivePerfStreamFpe}{" + nt_row["floats_per_elem"] + "}")
+        A("")
 
 with open(path("prog5_tables.tex"), "w") as f:
     f.write("\n".join(lines) + "\n")
