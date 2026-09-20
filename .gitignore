@@ -28,3 +28,4 @@ saxpy_experiments
 # submission archive (built by package.sh, never committed)
 CS3006_A2_*.zip
 gitlog.txt
+CS3006_A2_*/
