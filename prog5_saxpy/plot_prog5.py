@@ -1,0 +1,351 @@
+#!/usr/bin/env python3
+"""
+Figures and LaTeX tables for Program 5, from measure_prog5.sh output.
+
+  prog5_scaling.png    thread sweep against ideal scaling, and achieved
+                       bandwidth against the DIMM's theoretical peak
+  prog5_tasksweep.png  ISPC task granularity sweep
+  prog5_tables.tex     \\input by the write-up
+
+Every number here is read from the CSVs; nothing is transcribed by hand.
+"""
+import csv, os
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+def path(n): return os.path.join(HERE, n)
+
+N = 20_000_000
+BYTES_REPORTED = 4 * N * 4              # main.cpp's TOTAL_BYTES
+GIB = 1024 ** 3
+
+# One 16 GB DDR4-2667 DIMM, single channel: 2667 MT/s x 8 bytes per transfer.
+PEAK_GBS  = 2667 * 8 / 1000.0           # 21.336 GB/s, decimal
+PEAK_GIBS = PEAK_GBS * 1e9 / GIB        # 19.870 GiB/s, the program's unit
+
+
+def read_csv(name):
+    p = path(name)
+    if not os.path.exists(p):
+        return None
+    with open(p) as f:
+        return list(csv.DictReader(f))
+
+
+def fmt(x, nd=3):
+    return f"{x:.{nd}f}"
+
+
+# --------------------------------------------------------------------------
+bw = read_csv("prog5_bandwidth.csv")
+if bw is None:
+    raise SystemExit("run ./measure_prog5.sh study first")
+
+for r in bw:
+    r["ms"] = float(r["ms"])
+    r["threads"] = int(r["threads"])
+    r["reported_gibs"] = float(r["reported_gibs"])
+    r["dram_gbs"] = float(r["dram_gbs"])
+    r["traffic_floats"] = int(r["traffic_floats"])
+
+def series(variant):
+    rows = sorted((r for r in bw if r["variant"] == variant),
+                  key=lambda r: r["threads"])
+    return [r["threads"] for r in rows], rows
+
+def one(variant, threads=1):
+    for r in bw:
+        if r["variant"] == variant and r["threads"] == threads:
+            return r
+    return None
+
+store_t, store_rows = series("avx2_store")
+stream_t, stream_rows = series("avx2_stream")
+
+# --------------------------------------------------------------------------
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.5, 4.3))
+
+base_store = store_rows[0]["ms"]
+base_stream = stream_rows[0]["ms"]
+
+ax1.plot(store_t, [base_store / r["ms"] for r in store_rows],
+         "o-", color="#1f77b4", label="AVX2, ordinary stores")
+ax1.plot(stream_t, [base_stream / r["ms"] for r in stream_rows],
+         "s-", color="#d62728", label="AVX2, non-temporal stores")
+ax1.plot(store_t, store_t, "--", color="#888888", label="ideal (linear)")
+ax1.set_xlabel("threads")
+ax1.set_ylabel("speedup over the same kernel on 1 thread")
+ax1.set_title("Adding cores does not help")
+ax1.set_xticks(store_t)
+ax1.grid(alpha=0.3)
+ax1.legend(loc="upper left", fontsize=8)
+
+ax2.axhline(PEAK_GBS, ls="--", color="#333333", lw=1.4)
+ax2.text(store_t[-1], PEAK_GBS, f" DIMM peak {PEAK_GBS:.1f}",
+         va="bottom", ha="right", fontsize=8.5)
+ax2.plot(store_t, [r["dram_gbs"] for r in store_rows],
+         "o-", color="#1f77b4", label="ordinary stores (4N moved)")
+ax2.plot(stream_t, [r["dram_gbs"] for r in stream_rows],
+         "s-", color="#d62728", label="non-temporal stores (3N moved)")
+ax2.set_xlabel("threads")
+ax2.set_ylabel("DRAM bandwidth achieved (GB/s)")
+ax2.set_title("The memory system is the ceiling")
+ax2.set_xticks(store_t)
+ax2.set_ylim(0, PEAK_GBS * 1.18)
+ax2.grid(alpha=0.3)
+ax2.legend(loc="lower left", fontsize=8)
+
+fig.tight_layout()
+fig.savefig(path("prog5_scaling.png"), dpi=150)
+plt.close(fig)
+
+# --------------------------------------------------------------------------
+sweep = read_csv("prog5_tasksweep.csv")
+if sweep:
+    for r in sweep:
+        r["tasks"] = int(r["tasks"])
+        r["ms"] = float(r["ms"])
+        r["gibs"] = float(r["gibs"])
+    sweep.sort(key=lambda r: r["tasks"])
+
+    fig, ax = plt.subplots(figsize=(6.6, 4.0))
+    ax.plot([r["tasks"] for r in sweep], [r["ms"] for r in sweep],
+            "o-", color="#2ca02c")
+    shipped = next((r for r in sweep if r["tasks"] == 64), None)
+    if shipped:
+        ax.annotate("shipped (64)",
+                    xy=(shipped["tasks"], shipped["ms"]),
+                    xytext=(shipped["tasks"], shipped["ms"] + 0.9),
+                    ha="center", fontsize=8.5,
+                    arrowprops=dict(arrowstyle="->", lw=0.9))
+    ax.set_xscale("log", base=2)
+    ax.set_xticks([r["tasks"] for r in sweep])
+    ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+    ax.set_xlabel("ISPC tasks launched")
+    ax.set_ylabel("time (ms, minimum of 5)")
+    ax.set_title("Task granularity changes nothing")
+    lo = min(r["ms"] for r in sweep)
+    hi = max(r["ms"] for r in sweep)
+    ax.set_ylim(0, hi * 1.25)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(path("prog5_tasksweep.png"), dpi=150)
+    plt.close(fig)
+
+# --------------------------------------------------------------------------
+shipped_raw = read_csv("prog5_shipped_raw.csv")
+
+lines = []
+A = lines.append
+
+A("% Generated by plot_prog5.py -- do not edit by hand.")
+A("% This file is \\input from the preamble, so it may only define commands;")
+A("% each table is wrapped in a \\newcommand and invoked from the body.")
+A("")
+
+# Collect table bodies separately, then emit them as commands.
+_tbl = []
+def T(line):
+    _tbl.append(line)
+
+def endtable(name):
+    A(r"\newcommand{" + name + "}{%")
+    lines.extend(_tbl)
+    A("}")
+    A("")
+    del _tbl[:]
+
+# --- shipped program ------------------------------------------------------
+if shipped_raw:
+    ispc_ms = [float(r["ispc_ms"]) for r in shipped_raw]
+    task_ms = [float(r["task_ms"]) for r in shipped_raw]
+    mi, xi = min(ispc_ms), max(ispc_ms)
+    mt, xt = min(task_ms), max(task_ms)
+    A(r"\newcommand{\prognFiveShippedIspcMs}{" + fmt(mi) + "}")
+    A(r"\newcommand{\prognFiveShippedTaskMs}{" + fmt(mt) + "}")
+    A(r"\newcommand{\prognFiveTaskSpeedup}{" + fmt(mi / mt, 2) + "}")
+    A(r"\newcommand{\prognFiveIspcSpread}{" + fmt(100 * (xi - mi) / mi, 1) + "}")
+    A(r"\newcommand{\prognFiveTaskSpread}{" + fmt(100 * (xt - mt) / mt, 1) + "}")
+    A("")
+    T(r"\begin{table}[H]\centering")
+    T(r"\caption{Program 5 as shipped: five runs, minimum reported. "
+      r"Bandwidth is quoted in the program's own unit, which is "
+      r"GiB/s despite the \texttt{GB/s} label.}")
+    T(r"\label{tab:prog5-shipped}")
+    T(r"\begin{tabular}{lrrrr}\toprule")
+    T(r"Implementation & Min (ms) & Max (ms) & Spread & GiB/s at min \\\midrule")
+    for name, lo, hi in (("ISPC, one core", mi, xi),
+                         ("ISPC with 64 tasks", mt, xt)):
+        gibs = BYTES_REPORTED / GIB / (lo / 1000.0)
+        T(f"{name} & {fmt(lo)} & {fmt(hi)} & "
+          f"{fmt(100*(hi-lo)/lo,1)}\\% & {fmt(gibs)} \\\\")
+    T(r"\midrule")
+    T(r"\multicolumn{5}{l}{Speedup from tasks: $"
+      + fmt(mi / mt, 3) + r"\times$ --- a slowdown.} \\")
+    T(r"\bottomrule\end{tabular}\end{table}")
+    endtable(r"\prognFiveTableShipped")
+    A("")
+
+# --- peak comparison ------------------------------------------------------
+A(r"\newcommand{\prognFivePeakGBs}{" + fmt(PEAK_GBS, 2) + "}")
+A(r"\newcommand{\prognFivePeakGiBs}{" + fmt(PEAK_GIBS, 2) + "}")
+
+best = max(bw, key=lambda r: r["dram_gbs"] if r["traffic_floats"] == 4 else 0)
+A(r"\newcommand{\prognFiveBestDram}{" + fmt(best["dram_gbs"]) + "}")
+A(r"\newcommand{\prognFiveBestFrac}{"
+  + fmt(100 * best["dram_gbs"] / PEAK_GBS, 1) + "}")
+A(r"\newcommand{\prognFiveBestVariant}{" + best["variant"].replace("_", r"\_") + "}")
+A("")
+
+# --- thread sweep ---------------------------------------------------------
+T(r"\begin{table}[H]\centering")
+T(r"\caption{Thread sweep, hand-written AVX2 kernels, minimum of five runs. "
+  r"Ideal scaling would divide the time by the thread count; "
+  r"instead it rises. \emph{DRAM GB/s} applies the traffic model in the "
+  r"final column and is in decimal GB/s, the unit the DIMM is rated in.}")
+T(r"\label{tab:prog5-threads}")
+T(r"\begin{tabular}{rrrrrrr}\toprule")
+T(r"& \multicolumn{3}{c}{Ordinary stores ($4N$)} "
+  r"& \multicolumn{3}{c}{Non-temporal stores ($3N$)} \\")
+T(r"\cmidrule(lr){2-4}\cmidrule(lr){5-7}")
+T(r"Threads & ms & Speedup & DRAM GB/s & ms & Speedup & DRAM GB/s \\\midrule")
+for a, b in zip(store_rows, stream_rows):
+    T(f"{a['threads']} & {fmt(a['ms'])} & {fmt(base_store/a['ms'],2)}$\\times$ "
+      f"& {fmt(a['dram_gbs'],2)} & {fmt(b['ms'])} & "
+      f"{fmt(base_stream/b['ms'],2)}$\\times$ & {fmt(b['dram_gbs'],2)} \\\\")
+T(r"\bottomrule\end{tabular}\end{table}")
+endtable(r"\prognFiveTableThreads")
+A("")
+
+# --- roofline constants ---------------------------------------------------
+# 4 cores x 8 single-precision lanes x 2 flops per FMA x 2 FMA units, at the
+# all-core turbo clock measured in Program 1.
+ALLCORE_GHZ = 3.704
+PEAK_GFLOPS = 4 * 8 * 2 * 2 * ALLCORE_GHZ
+INTENSITY = 2.0 / 16.0                  # 2 flops per 16 bytes actually moved
+RIDGE = PEAK_GFLOPS / PEAK_GBS
+
+ispc1 = one("ispc", 1)
+achieved_gflops = 2.0 * N / (ispc1["ms"] / 1000.0) / 1e9
+
+A(r"\newcommand{\prognFiveAllcoreGHz}{" + fmt(ALLCORE_GHZ) + "}")
+A(r"\newcommand{\prognFivePeakGflops}{" + fmt(PEAK_GFLOPS, 0) + "}")
+A(r"\newcommand{\prognFiveGflops}{" + fmt(achieved_gflops, 2) + "}")
+A(r"\newcommand{\prognFiveGflopsFrac}{"
+  + fmt(100 * achieved_gflops / PEAK_GFLOPS, 2) + "}")
+A(r"\newcommand{\prognFiveIntensity}{" + fmt(INTENSITY, 3) + "}")
+A(r"\newcommand{\prognFiveRidge}{" + fmt(RIDGE, 1) + "}")
+A(r"\newcommand{\prognFiveRidgeRatio}{" + fmt(RIDGE / INTENSITY, 0) + "}")
+A("")
+
+# --- non-temporal store result -------------------------------------------
+st = one("avx2_store", 1)
+nt = one("avx2_stream", 1)
+gain = st["ms"] / nt["ms"]
+A(r"\newcommand{\prognFiveNtGain}{" + fmt(gain, 3) + "}")
+A(r"\newcommand{\prognFiveNtPredicted}{" + fmt(4.0 / 3.0, 3) + "}")
+A(r"\newcommand{\prognFiveNtAccuracy}{"
+  + fmt(100 * gain / (4.0 / 3.0), 1) + "}")
+A(r"\newcommand{\prognFiveNtMs}{" + fmt(nt["ms"]) + "}")
+A(r"\newcommand{\prognFiveStoreMs}{" + fmt(st["ms"]) + "}")
+A(r"\newcommand{\prognFiveNtReported}{" + fmt(nt["reported_gibs"]) + "}")
+
+st8 = one("avx2_store", 8)
+A(r"\newcommand{\prognFiveStoreEightMs}{" + fmt(st8["ms"]) + "}")
+A(r"\newcommand{\prognFiveStoreEightSpeedup}{" + fmt(st["ms"] / st8["ms"], 2) + "}")
+
+# Lower bound on runtime for a 3N kernel at the best bandwidth this machine
+# has been observed to sustain.
+floor_ms = 3.0 * N * 4 / (best["dram_gbs"] * 1e9) * 1000.0
+A(r"\newcommand{\prognFiveFloorMs}{" + fmt(floor_ms, 1) + "}")
+A(r"\newcommand{\prognFiveFloorGap}{"
+  + fmt(100 * (nt["ms"] - floor_ms) / floor_ms, 1) + "}")
+
+if shipped_raw:
+    A(r"\newcommand{\prognFiveNtVsTasks}{" + fmt(mt / nt["ms"], 2) + "}")
+A("")
+
+# --- reference implementations -------------------------------------------
+T(r"\begin{table}[H]\centering")
+T(r"\caption{All implementations at their best configuration, minimum of "
+  r"five runs. The \emph{reported} column is what \texttt{main.cpp} would "
+  r"print: it assumes $4N$ floats move regardless of what the kernel "
+  r"actually does.}")
+T(r"\label{tab:prog5-all}")
+T(r"\begin{tabular}{llrrr}\toprule")
+T(r"Implementation & Parallelism & ms & Reported GiB/s & DRAM GB/s \\\midrule")
+order = [("serial", 1, "scalar, 1 core"),
+         ("ispc", 1, "SIMD, 1 core"),
+         ("ispc_tasks", -1, "SIMD, 64 tasks"),
+         ("avx2_store", 1, "SIMD, 1 core"),
+         ("avx2_stream", 1, "SIMD, 1 core")]
+PRETTY = {"serial": "Serial (as shipped)", "ispc": "ISPC (as shipped)",
+          "ispc_tasks": "ISPC with tasks (as shipped)",
+          "avx2_store": "AVX2 intrinsics", "avx2_stream": "AVX2, non-temporal"}
+for v, t, par in order:
+    r = one(v, t)
+    if r is None:
+        continue
+    T(f"{PRETTY[v]} & {par} & {fmt(r['ms'])} & "
+      f"{fmt(r['reported_gibs'])} & {fmt(r['dram_gbs'])} \\\\")
+T(r"\midrule")
+T(r"\multicolumn{3}{l}{Theoretical peak of the installed DIMM} & "
+  + fmt(PEAK_GIBS) + " & " + fmt(PEAK_GBS) + r" \\")
+T(r"\bottomrule\end{tabular}\end{table}")
+endtable(r"\prognFiveTableAll")
+A("")
+
+# --- task sweep -----------------------------------------------------------
+if sweep:
+    T(r"\begin{table}[H]\centering")
+    T(r"\caption{ISPC task-count sweep, minimum of five runs each. The "
+      r"shipped code launches 64.}")
+    T(r"\label{tab:prog5-tasks}")
+    T(r"\begin{tabular}{rrr}\toprule")
+    T(r"Tasks & ms & Reported GiB/s \\\midrule")
+    for r in sweep:
+        mark = r" \quad(shipped)" if r["tasks"] == 64 else ""
+        T(f"{r['tasks']}{mark} & {fmt(r['ms'])} & {fmt(r['gibs'])} \\\\")
+    T(r"\bottomrule\end{tabular}\end{table}")
+    endtable(r"\prognFiveTableTasks")
+    A("")
+    lo = min(sweep, key=lambda r: r["ms"])
+    hi = max(sweep, key=lambda r: r["ms"])
+    A(r"\newcommand{\prognFiveTaskBestN}{" + str(lo["tasks"]) + "}")
+    A(r"\newcommand{\prognFiveTaskBestMs}{" + fmt(lo["ms"]) + "}")
+    A(r"\newcommand{\prognFiveTaskWorstMs}{" + fmt(hi["ms"]) + "}")
+    A(r"\newcommand{\prognFiveTaskRange}{"
+      + fmt(100 * (hi["ms"] - lo["ms"]) / lo["ms"], 1) + "}")
+    A("")
+
+# --- perf counters, if the elevated run was done --------------------------
+perf = read_csv("prog5_perf_traffic.csv")
+if perf:
+    T(r"\begin{table}[H]\centering")
+    T(r"\caption{DRAM traffic measured at the memory controller "
+      r"(\texttt{uncore\_imc}), per call, differential over ten repetitions. "
+      r"One array is 76.3\,MiB, so $4N$ floats is 305.2\,MiB.}")
+    T(r"\label{tab:prog5-perf}")
+    T(r"\begin{tabular}{lrrrr}\toprule")
+    T(r"Kernel & Reads (MiB) & Writes (MiB) & Total (MiB) "
+      r"& Floats per element \\\midrule")
+    for r in perf:
+        T(f"{r['variant'].replace('_', chr(92)+'_')} & {r['reads_mib']} & "
+          f"{r['writes_mib']} & {r['total_mib']} & {r['floats_per_elem']} \\\\")
+    T(r"\bottomrule\end{tabular}\end{table}")
+    endtable(r"\prognFiveTablePerf")
+    A("")
+
+with open(path("prog5_tables.tex"), "w") as f:
+    f.write("\n".join(lines) + "\n")
+
+print("wrote prog5_scaling.png"
+      + (", prog5_tasksweep.png" if sweep else "")
+      + ", prog5_tables.tex")
+print(f"  peak: {PEAK_GBS:.3f} GB/s decimal = {PEAK_GIBS:.3f} GiB/s")
+print(f"  best 4N-model DRAM bandwidth: {best['dram_gbs']:.3f} GB/s "
+      f"({100*best['dram_gbs']/PEAK_GBS:.1f}% of peak) [{best['variant']}]")
+print(f"  non-temporal gain: {gain:.3f}x vs 4/3 = 1.333x predicted "
+      f"({100*gain/(4/3):.1f}% of prediction)")

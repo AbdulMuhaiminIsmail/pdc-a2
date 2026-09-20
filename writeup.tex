@@ -12,7 +12,8 @@
 \usepackage[table]{xcolor}
 \usepackage[hidelinks]{hyperref}
 
-\graphicspath{{prog1_mandelbrot_threads/}{prog2_vecintrin/}{prog3_mandelbrot_ispc/}{prog4_sqrt/}}
+\graphicspath{{prog1_mandelbrot_threads/}{prog2_vecintrin/}{prog3_mandelbrot_ispc/}
+             {prog4_sqrt/}{prog5_saxpy/}}
 
 \setlength{\emergencystretch}{3em}   % let TeX stretch rather than overflow
 \setlength{\parskip}{0.5em}
@@ -27,6 +28,7 @@
 \input{prog2_vecintrin/prog2_tables.tex}
 \input{prog3_mandelbrot_ispc/prog3_tables.tex}
 \input{prog4_sqrt/prog4_tables.tex}
+\input{prog5_saxpy/prog5_tables.tex}
 
 \title{\vspace{-1.5cm}\textbf{CS3006 --- Parallel and Distributed Computing}\\[0.3em]
        \large Assignment 2: Performance Analysis on a Multi-Core CPU}
@@ -90,6 +92,7 @@ that costs.
 
 %======================================================================
 \section{Measurement Protocol}
+\label{sec:protocol}
 %======================================================================
 
 Every number in this report was obtained under the following protocol, which
@@ -1175,5 +1178,308 @@ contrived so much as adversarial --- a real workload with one expensive element
 per eight would behave the same way. Finally, the two levers are independent:
 fixing divergence did nothing for multi-core scaling, and no amount of
 multi-core scaling would have fixed divergence.
+
+
+%======================================================================
+\section{Program 5: BLAS \texttt{saxpy}}
+\label{sec:prog5}
+%======================================================================
+
+\texttt{saxpy} computes $\text{result} = \alpha X + Y$ over $N = 20$ million
+single-precision elements. It is the simplest possible parallel workload:
+every element is independent, the access pattern is a pure unit-stride stream,
+and the cost per element is identical, so none of the effects that limited
+Programs 1--4 --- load imbalance, divergence, scheduling --- can arise here.
+The handout asks what speedup ISPC tasks deliver and whether the program can be
+substantially improved. It is the one program in the assignment where the
+answer has nothing to do with how the work is divided.
+
+\subsection{Part 1: the speedup from tasks}
+
+The shipped program was run five times under the protocol of
+Section~\ref{sec:protocol}; Table~\ref{tab:prog5-shipped} gives the result.
+
+\prognFiveTableShipped
+
+\begin{quote}
+\textbf{The speedup from using tasks is $\mathbf{\prognFiveTaskSpeedup\times}$
+--- distributing the work across all eight hardware threads makes the program
+\emph{slower} than running it on one.}
+\end{quote}
+
+This is not measurement noise. The single-core ISPC time was
+\ms{\prognFiveShippedIspcMs} at its minimum and the 64-task time was
+\ms{\prognFiveShippedTaskMs}; the task version was slower in four of the five
+paired runs. It is also not a small effect hiding inside a large spread: the
+run-to-run spreads were \prognFiveIspcSpread\% and \prognFiveTaskSpread\%, and
+the gap between the two minima is larger than either. Every other program in
+this assignment gained between $5.2\times$ and $6.3\times$ from the same eight
+hardware contexts. Here they buy nothing.
+
+\subsection{Why: the ratio of arithmetic to memory traffic}
+
+The reason is visible from the source without running anything. Per element,
+\texttt{saxpy} performs two floating-point operations --- one multiply, one add
+--- and touches three floats. The \emph{arithmetic intensity} is therefore
+
+\[
+I = \frac{2 \text{ flops}}{16 \text{ bytes}} = \prognFiveIntensity \text{ flop/byte},
+\]
+
+using the 16 bytes per element that Section~\ref{sec:prog5ec1} shows are
+actually moved. Compare that with what the machine is built to do. Four
+Kaby Lake cores, each with two FMA units of eight single-precision lanes, at
+the $\prognFiveAllcoreGHz$\,GHz all-core turbo measured in Table~\ref{tab:p1clock}:
+
+\[
+4 \times 8 \times 2 \times 2 \times \prognFiveAllcoreGHz\,\text{GHz}
+= \prognFivePeakGflops\,\text{GFLOPS}.
+\]
+
+Against a peak memory bandwidth of \prognFivePeakGBs\,GB/s, the machine's
+\emph{ridge point} --- the intensity at which the two limits balance --- sits at
+$\prognFivePeakGflops / \prognFivePeakGBs = \prognFiveRidge$\,flop/byte. \texttt{saxpy} operates at
+$\prognFiveIntensity$\,flop/byte, a factor of $\prognFiveRidgeRatio$ below it. The program achieved
+$\prognFiveGflops$\,GFLOPS, which is $\prognFiveGflopsFrac\%$ of the floating-point peak: the arithmetic
+units are idle better than $99.5\%$ of the time, waiting on memory. Adding
+cores adds more units to keep idle.
+
+\subsection{Achieved bandwidth against the DIMM's theoretical peak}
+
+The machine has one 16\,GB DDR4-2667 module in Channel~A and an empty
+Channel~B, so its theoretical peak memory bandwidth is
+$2667\,\text{MT/s} \times 8\,\text{bytes} = \prognFivePeakGBs$\,GB/s.
+
+One unit conversion has to be done before that number can be compared with the
+program's output. \texttt{main.cpp}'s \texttt{toBW} divides by $1024^3$, so the
+figure it prints and labels \texttt{GB/s} is in fact GiB/s. DDR4 transfer rates
+are quoted in decimal units. The two forms of the same ceiling are
+
+\[
+\prognFivePeakGBs\,\text{GB/s (decimal)}
+\;=\;
+\prognFivePeakGiBs\,\text{GiB/s (binary)} .
+\]
+
+Table~\ref{tab:prog5-all} reports both columns for every implementation, so no
+comparison in this section mixes the units.
+
+\prognFiveTableAll
+
+\begin{quote}
+\textbf{Both numbers, as required.} Theoretical peak of the installed memory:
+$\mathbf{\prognFivePeakGBs}$\,\textbf{GB/s}. Best bandwidth achieved by the
+program: $\mathbf{\prognFiveBestDram}$\,\textbf{GB/s}, which is
+$\mathbf{\prognFiveBestFrac\%}$ \textbf{of theoretical peak}, reached by
+single-core ISPC.
+\end{quote}
+
+$\prognFiveBestFrac\%$ of theoretical peak is close to the practical maximum for any real
+kernel --- DRAM refresh, row activation and turnaround overheads account for
+most of the remaining $15\%$. The program is not leaving performance on the
+table. It is already running the memory system nearly flat out, which is
+exactly why nothing that adds compute capacity changes the answer.
+
+The right-hand panel of Figure~\ref{fig:prog5scaling} makes the point directly:
+every configuration measured, at every thread count, with either store
+strategy, lands in a narrow band just below the DIMM's ceiling.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{prog5_scaling.png}
+\caption{Left: speedup from adding threads, against ideal linear scaling.
+Right: the DRAM bandwidth those same configurations achieve, against the
+theoretical peak of the installed module. The left panel is flat because the
+right panel is full.}
+\label{fig:prog5scaling}
+\end{figure}
+
+\subsection{Ruling out the alternative explanations}
+
+Two things other than bandwidth could produce a $\prognFiveTaskSpeedup\times$
+result, and both were tested rather than assumed.
+
+\paragraph{Task granularity.} The shipped code launches exactly 64 tasks. If
+that were too coarse or too fine, the measurement would say more about ISPC's
+scheduler than about the machine. The task count was made a compile-time
+parameter and swept over the range 1--256
+(Table~\ref{tab:prog5-tasks}, Figure~\ref{fig:prog5tasks}).
+
+\prognFiveTableTasks
+ The best count was
+\prognFiveTaskBestN{} at \ms{\prognFiveTaskBestMs} and the worst was
+\ms{\prognFiveTaskWorstMs}, a total range of \prognFiveTaskRange\%, and the
+trend is monotone in the wrong direction --- \emph{fewer} tasks is faster, with
+one task fastest of all. There is no granularity at which tasks win. This also
+rules out load imbalance as a contributor, which was the dominant effect in
+Program~3.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.62\textwidth]{prog5_tasksweep.png}
+\caption{ISPC task-count sweep. Performance is flat to slightly declining
+across two orders of magnitude of granularity.}
+\label{fig:prog5tasks}
+\end{figure}
+
+\paragraph{ISPC's task system specifically.} The sweep above still runs
+entirely inside ISPC, so it cannot distinguish "bandwidth-bound" from
+"something is wrong with \texttt{tasksys}". A separate hand-written AVX2 kernel
+was therefore parallelised with plain \texttt{std::thread} and swept over
+1--8 threads (Table~\ref{tab:prog5-threads}, left half of
+Figure~\ref{fig:prog5scaling}).
+
+\prognFiveTableThreads
+ It reproduces the ISPC result exactly: one
+thread runs in \ms{\prognFiveStoreMs}, eight threads in
+\ms{\prognFiveStoreEightMs}, a speedup of $\prognFiveStoreEightSpeedup\times$. Two independent threading
+implementations agreeing on a slowdown is the memory system, not a runtime.
+
+The small \emph{negative} slope is itself explainable: with the bus already
+saturated, extra threads contribute nothing but interleaved access streams,
+which reduce DRAM row-buffer locality, plus thread creation and join costs that
+the single-threaded version does not pay.
+
+\subsection{Can it be substantially improved? Could it scale linearly?}
+
+\begin{quote}
+\textbf{Near-linear speedup: no.} Not by any rewrite. A kernel's execution time
+cannot fall below $(\text{bytes moved}) / (\text{achievable bandwidth})$, and
+neither term depends on how many cores run it. The bytes are fixed by the
+problem statement --- $N$ elements must be read and $N$ written --- and the
+bandwidth is a property of one DDR4-2667 channel. Linear speedup in $T$ would
+require bandwidth to grow with $T$, and on this machine it does not grow at
+all: a single core already draws \prognFiveBestFrac\% of what the module can supply, so there
+is no headroom for a second core to exploit, let alone an eighth.
+\end{quote}
+
+\begin{quote}
+\textbf{Substantially improved: yes, but only by moving fewer bytes} --- and by
+a bounded factor. Section~\ref{sec:prog5ec2} achieves
+$\prognFiveNtGain\times$, which is essentially all of the
+$\prognFiveNtPredicted\times$ that is theoretically available.
+\end{quote}
+
+The distinction matters. "Make it parallel" is the wrong question for this
+program; "make it move less data" is the right one. That is the general lesson
+of the roofline model, and it is the reason the same eight hardware threads
+that were worth $6.3\times$ in Program~3 are worth $0.92\times$ here.
+
+It is worth stating what would actually fix this machine, since it is a
+configuration problem rather than a code problem: populating Channel~B would
+double the theoretical peak to $42.7$\,GB/s. On a bandwidth-bound kernel
+running at \prognFiveBestFrac\% of a single channel, that second module is worth far more
+than any amount of rewriting --- and, unlike the rewriting, it would also let
+the task version finally do something useful, since one core cannot saturate
+two channels.
+
+\subsection{Extra credit: why the multiplier is four, not three}
+\label{sec:prog5ec1}
+
+\texttt{main.cpp} computes \texttt{TOTAL\_BYTES = 4 * N * sizeof(float)} even
+though the kernel reads two floats and writes one. The missing fourth access is
+a read that the program never asked for.
+
+Stores go through the cache. When \texttt{result[i]} is written, the hardware
+must first bring the containing 64-byte line into cache so that the parts of
+the line not being written are preserved, and so that the cache has a coherent
+copy to own. This is a \emph{read-for-ownership}. Because \texttt{result} is
+80\,MB and the L3 is 8\,MiB, every line misses, so every line is fetched from
+DRAM --- and then immediately overwritten in full and later written back. The
+traffic per element is therefore one read of $X$, one read of $Y$, one
+read-for-ownership of \texttt{result}, and one writeback of \texttt{result}:
+four floats, of which the third is pure waste.
+
+This explanation is testable, and two independent tests confirm it.
+
+\paragraph{Test 1: remove the read-for-ownership and see if the time drops by
+the predicted amount.} \texttt{\_mm256\_stream\_ps} issues a non-temporal
+store, which writes a full line straight to memory without fetching it first.
+If the account above is right, traffic falls from $4N$ to $3N$ and the kernel
+should speed up by $4/3 = \prognFiveNtPredicted\times$. Measured:
+\ms{\prognFiveStoreMs} $\rightarrow$ \ms{\prognFiveNtMs}, a factor of
+$\prognFiveNtGain\times$, which is \prognFiveNtAccuracy\% of the prediction.
+A change that touches only how the results are written, and nothing about the
+arithmetic or the reads, recovered almost exactly one quarter of the runtime.
+
+\ifdefined\prognFiveTablePerf
+\prognFiveTablePerf
+\fi
+
+\paragraph{Test 2: a reported number that is physically impossible.}
+\texttt{toBW} hard-codes the $4N$ assumption. Applied to the non-temporal
+variant it reports \prognFiveNtReported\,GiB/s --- above the
+\prognFivePeakGiBs\,GiB/s that a single DDR4-2667 channel can physically
+transfer. No kernel can exceed its own memory bus, so the only possible
+conclusion is that this kernel is not moving $4N$ bytes. That is precisely the
+claim. The formula is right for the shipped code and wrong for the
+non-temporal version, which is the cleanest demonstration that the fourth $N$
+is the read-for-ownership and not something intrinsic to \texttt{saxpy}.
+
+\subsection{Extra credit: improving \texttt{saxpy}}
+\label{sec:prog5ec2}
+
+The improvement follows from the analysis: since the kernel is bandwidth-bound
+at \prognFiveBestFrac\% of peak, the only lever is total bytes, and the only removable bytes
+are the read-for-ownership. Replacing the store with
+\texttt{\_mm256\_stream\_ps} gives
+
+\begin{quote}
+\ms{\prognFiveStoreMs} $\rightarrow$ \ms{\prognFiveNtMs}, a
+$\mathbf{\prognFiveNtGain\times}$ \textbf{speedup, on one core}, beating all
+eight hardware threads of the shipped task version
+(\ms{\prognFiveShippedTaskMs}) by $\prognFiveNtVsTasks\times$.
+\end{quote}
+
+Two implementation details matter. Chunk boundaries are forced to whole
+64-byte lines, because a non-temporal store covering part of a line still
+triggers the fetch it was meant to avoid, which would silently undo the
+optimisation. And \texttt{\_mm\_sfence} is issued at the end of each thread's
+range, since non-temporal stores are weakly ordered with respect to everything
+else.
+
+\paragraph{What the best possible implementation would achieve.} With $3N$
+floats of traffic and the $\prognFiveBestDram$\,GB/s this machine has been
+observed to sustain, the floor is
+$240\,\text{MB} / \prognFiveBestDram\,\text{GB/s} = \ms{\prognFiveFloorMs}$. The measured
+\ms{\prognFiveNtMs} is within $\prognFiveFloorGap\%$ of that floor, so there is essentially
+nothing left to win on this hardware --- and the remaining gap is not worth
+chasing, because it is smaller than the run-to-run spread of the shipped
+program. Going faster requires a different memory configuration, not different
+code. On a dual-channel machine of the same generation the same source would be
+expected to run at roughly twice the speed, and only there would multi-threading
+begin to pay.
+
+\subsection{Summary}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+Question & Answer & Mechanism \\
+\midrule
+Speedup from ISPC tasks?      & $\prognFiveTaskSpeedup\times$ (a slowdown) & Bus already saturated by 1 core \\
+Is it granularity?            & No, swept 1--256 tasks & Range only \prognFiveTaskRange\%, monotone \\
+Is it ISPC's runtime?         & No, \texttt{std::thread} agrees & $\prognFiveStoreEightSpeedup\times$ at 8 threads \\
+Theoretical peak bandwidth    & $\prognFivePeakGBs$\,GB/s & Single-channel DDR4-2667 \\
+Achieved bandwidth            & $\prognFiveBestDram$\,GB/s & $\prognFiveBestFrac\%$ of peak \\
+FP units utilised             & $\prognFiveGflopsFrac\%$ of \prognFivePeakGflops\,GFLOPS & $I = \prognFiveIntensity$ vs ridge $\prognFiveRidge$ \\
+Near-linear speedup possible? & \textbf{No} & Bandwidth does not scale with $T$ \\
+Substantially improvable?     & Yes, $\prognFiveNtGain\times$ & Move $3N$ instead of $4N$ \\
+Why the $4\times$ multiplier? & Read-for-ownership & Confirmed two ways \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{What this program demonstrates.} Parallelism is not a universal
+speedup. Programs 1--4 were limited by how work was divided, and every one of
+them rewarded better division. \texttt{saxpy} is limited by a resource that
+division cannot multiply, so the same techniques that were worth $6\times$
+elsewhere are worth less than nothing here. Recognising which regime a kernel
+is in --- by comparing its arithmetic intensity against the machine's ridge
+point, which takes no measurement at all --- is what decides whether the next
+hour is better spent on threads or on data movement. This program is also the
+one place in the assignment where the machine's own configuration, a single
+populated memory channel, sets the result more firmly than any code does.
 
 \end{document}

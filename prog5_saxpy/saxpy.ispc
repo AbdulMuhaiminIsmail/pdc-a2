@@ -1,4 +1,11 @@
 
+// Task count is fixed at 64 in the shipped code. It is exposed here so the
+// granularity can be swept without editing the source; the default value
+// reproduces the shipped configuration exactly.
+#ifndef SAXPY_TASKS
+#define SAXPY_TASKS 64
+#endif
+
 export void saxpy_ispc(uniform int N,
                        uniform float scale,
                             uniform float X[],
@@ -33,7 +40,10 @@ export void saxpy_ispc_withtasks(uniform int N,
                                uniform float result[])
 {
 
-    uniform int span = N / 64;  // 64 tasks
+    // Round up so the final task absorbs the remainder rather than leaving
+    // elements unprocessed when SAXPY_TASKS does not divide N.
+    uniform int span = (N + SAXPY_TASKS - 1) / SAXPY_TASKS;
+    uniform int numTasks = (N + span - 1) / span;
 
-    launch[N/span] saxpy_ispc_task(N, span, scale, X, Y, result);
+    launch[numTasks] saxpy_ispc_task(N, span, scale, X, Y, result);
 }
