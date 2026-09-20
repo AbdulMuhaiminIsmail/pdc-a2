@@ -13,7 +13,7 @@
 \usepackage[hidelinks]{hyperref}
 
 \graphicspath{{prog1_mandelbrot_threads/}{prog2_vecintrin/}{prog3_mandelbrot_ispc/}
-             {prog4_sqrt/}{prog5_saxpy/}}
+             {prog4_sqrt/}{prog5_saxpy/}{prog6_kmeans/}}
 
 \setlength{\emergencystretch}{3em}   % let TeX stretch rather than overflow
 \setlength{\parskip}{0.5em}
@@ -29,6 +29,7 @@
 \input{prog3_mandelbrot_ispc/prog3_tables.tex}
 \input{prog4_sqrt/prog4_tables.tex}
 \input{prog5_saxpy/prog5_tables.tex}
+\input{prog6_kmeans/prog6_tables.tex}
 
 \title{\vspace{-1.5cm}\textbf{CS3006 --- Parallel and Distributed Computing}\\[0.3em]
        \large Assignment 2: Performance Analysis on a Multi-Core CPU}
@@ -1481,5 +1482,337 @@ point, which takes no measurement at all --- is what decides whether the next
 hour is better spent on threads or on data movement. This program is also the
 one place in the assignment where the machine's own configuration, a single
 populated memory channel, sets the result more firmly than any code does.
+
+
+%======================================================================
+\section{Program 6: Making \texttt{K-Means} Faster}
+\label{sec:prog6}
+%======================================================================
+
+The starter code clusters $M = 1{,}000{,}000$ points of dimension $N = 100$
+into $K = 3$ clusters, and it is already correct --- the task is purely to find
+where the time goes and remove it. The handout deliberately does not say where
+to look. Two constraints shape everything that follows: only
+\texttt{kmeansThread.cpp} may be modified, and \emph{only one} of
+\texttt{dist}, \texttt{computeAssignments}, \texttt{computeCentroids} and
+\texttt{computeCost} may be parallelised. Choosing which one is the whole
+problem, and that choice has to be made on evidence rather than intuition.
+
+\paragraph{Dataset.} All measurements use the supplied \texttt{data.dat},
+804{,}002{,}420 bytes, whose MD5 checksum is
+
+\begin{center}
+\texttt{3a25f24193f4fdca82ee4cb2737fd5bb}
+\end{center}
+
+\noindent The file itself is not committed to the repository, on account of its
+size.
+
+\subsection{Step 1: measure before changing anything}
+
+\texttt{CycleTimer} probes were placed around the three phases inside the main
+loop, accumulating per-phase totals across the whole run and printing them when
+\texttt{KMEANS\_PROFILE} is set. The run converges in \prognSixIters{}
+iterations.
+
+One measurement precaution proved necessary. The first profiled run reported a
+total 11\% above the clean baseline, and the excess was spread across phases
+that had not been touched. This is a 45\,W mobile part running a single-threaded
+workload for roughly fifty seconds, which is long enough to heat it into a lower
+turbo bin, so a run taken immediately after another is measurably slower. The
+harness therefore profiles three times and keeps the fastest, consistent with
+the minimum-of-$N$ rule used throughout this report. For the same reason the
+later comparisons are run as interleaved rounds --- every configuration once
+per round, minimum taken across rounds --- rather than all repetitions of one
+configuration before moving to the next, so that drift is shared between
+configurations instead of being charged to whichever one happens to run last.
+
+\prognSixTableProfile
+
+\begin{quote}
+\textbf{\texttt{computeAssignments} accounts for \prognSixFPct\% of the
+runtime.} It is the only phase large enough for Amdahl's Law to permit the
+required speedup, so it is the one function to parallelise.
+\end{quote}
+
+The profile also explains \emph{why} the phases cost what they do, which
+matters for knowing what can be recovered. \texttt{computeAssignments} performs
+$K \times M = 3 \times 10^{6}$ calls to \texttt{dist}, \texttt{computeCost}
+performs $M = 10^{6}$, and \texttt{computeCentroids} performs none --- it
+streams $M \times N$ doubles and accumulates. The measured ratio of the first
+two phases is close to the $3:1$ their call counts predict.
+
+\paragraph{Why \texttt{dist} is slower than it looks.} Disassembling the
+starter object file shows something worth knowing before trying to fix
+anything. GCC does fold \texttt{pow(x,2)} into a multiply --- there is no call
+to \texttt{pow} in the generated code --- and it does vectorise the subtract
+and square into \texttt{vsubpd}/\texttt{vmulpd}. But the accumulation comes out
+as a chain of scalar \texttt{vaddsd} instructions, because floating-point
+addition is not associative and the compiler may not reorder the sum without
+being told it can. Each \texttt{dist} call is therefore a dependency chain of
+$N = 100$ additions at roughly four cycles of latency each: about 400 cycles,
+and the arithmetic units sit idle between links. At $3\times 10^{6}$ calls per
+iteration that predicts roughly $1.2\times10^{9}$ cycles, or \ms{310} at the
+$3.881$\,GHz single-thread turbo recorded in Table~\ref{tab:p1clock}. The
+measured cost is \ms{340.7} per iteration --- about 10\% above the estimate,
+which is what one expects when the clock cannot hold peak turbo through a
+fifty-second run. A model this simple landing that close is good evidence that
+the dependency chain, and not memory or anything else, is what sets the
+cost.
+
+This matters because it tells us the phase is \emph{latency}-bound, not
+bandwidth-bound. Latency-bound work is exactly the kind that parallelism
+helps: eight threads run eight independent dependency chains at once.
+
+\subsection{Step 2: what Amdahl's Law permits}
+
+With $f = \prognSixF$ of the runtime in the one function we are allowed to
+parallelise and $T = 8$ hardware contexts:
+
+\[
+S_{max} = \frac{1}{(1 - f) + \dfrac{f}{T}}
+        = \frac{1}{\prognSixSerialFrac + \dfrac{\prognSixF}{8}}
+        = \frac{1}{\prognSixSerialFrac + \prognSixFOverT}
+        = \frac{1}{\prognSixDenom}
+        = \mathbf{\prognSixSmax\times} .
+\]
+
+Two things follow immediately. The handout's $2.1\times$ target is achievable
+but not comfortably --- it requires capturing
+$2.1 / \prognSixSmax = \prognSixTargetFrac\%$ of the theoretical maximum, so a
+merely adequate parallelisation will miss. And the $\prognSixSerialFrac$ of
+runtime outside \texttt{computeAssignments} is untouchable under the
+one-function rule, which fixes the ceiling no matter how well the rest is done.
+
+\subsection{Step 3: the obvious parallelisation, and why it is the wrong one}
+
+The starter code hands \texttt{computeAssignments} a range
+\texttt{[args->start, args->end)} over the cluster index $k$, and its outer
+loop runs over exactly that range. The structure is an invitation to split on
+$k$, so that was tried first.
+
+It requires more care than it appears to. Threads splitting on $k$ all write
+the shared \texttt{minDist} and \texttt{clusterAssignments} arrays, so each
+thread needs private copies and a serial merge afterwards to pick the winning
+centroid per point. Implemented that way it is correct --- it converges in the
+same \prognSixIters{} iterations --- and it does speed the phase up.
+
+\begin{quote}
+\textbf{Result: $\prognSixByKSpeedup\times$ overall} (\ms{\prognSixByKMs}),
+short of the $2.1\times$ target.
+\end{quote}
+
+The reason is structural rather than a defect of the implementation:
+$K = 3$. There are only three units of work on this axis, so at most three of
+the eight hardware contexts can ever be busy, and five sit idle. The phase
+itself sped up by $\prognSixByKAssignGain\times$ --- or
+$\prognSixByKAssignGainAdj\times$ once one allows for the two phases this
+variant does \emph{not} touch having also run \prognSixByKDrift\% faster in
+that run, so part of the apparent gain is clock rather than threads. Either way
+it is a reasonable return on three threads, but three threads is all the axis
+allows. Additionally, splitting on $k$ keeps
+the original loop order, in which each thread streams the entire 800\,MB data
+array for its own $k$ --- so total memory traffic is unchanged while the merge
+pass adds a new $M$-length scan.
+
+The lesson is that the axis the code hands you is not necessarily the axis the
+problem has. $K = 3$ and $M = 10^{6}$ are both available; only one of them is
+larger than the machine.
+
+\subsection{Step 4: parallelising over data points}
+
+The fix inverts the loops. Instead of \emph{for each centroid, scan every
+point}, the code does \emph{for each point, compare against every centroid}:
+
+\begin{verbatim}
+for (int m = mStart; m < mEnd; m++) {
+  const double *point = &args->data[(size_t)m * N];
+  double best = 1e30; int bestK = -1;
+  for (int k = args->start; k < args->end; k++) {
+    double d = dist(point, &args->clusterCentroids[k * N], N);
+    if (d < best) { best = d; bestK = k; }
+  }
+  args->clusterAssignments[m] = bestK;
+}
+\end{verbatim}
+
+This one change does three things at once.
+
+\begin{enumerate}
+\item \textbf{It creates a million units of work instead of three.} Each thread
+takes a contiguous range of $m$, so any thread count divides the work evenly
+and every thread does identical work --- there is no load imbalance to manage,
+unlike Program~1.
+
+\item \textbf{It removes all sharing.} Each point's minimum is now a local
+variable and each thread writes only its own slice of
+\texttt{clusterAssignments}. The \texttt{minDist} array of $M$ doubles
+disappears entirely, along with the merge pass that the $k$-split needed. No
+locks, no atomics, no false sharing beyond one cache line at each range
+boundary.
+
+\item \textbf{It cuts memory traffic by a factor of $K$.} The original reads
+the whole 800\,MB data array once per centroid; this reads each point once and
+compares it against all three centroids while it is still in registers. The
+three centroids are $3 \times 100$ doubles --- 2.4\,KB, permanently in L1.
+Given what Program~5 established about this machine's memory system, this part
+is not incidental: the original ordering moves $K \times \prognSixDataMB$\,MB per
+iteration, which at the \prognFiveBestDram\,GB/s measured in Program~5 would
+alone cost \ms{\prognSixOrigTrafficMs}.
+\end{enumerate}
+
+\paragraph{Size of the change.} The handout estimates its own solution at
+20--25 lines, and the change that matters here is about 35: the point-major
+loop above, and the code that splits $[0, M)$ across threads. The file grows by
+more than that because the \texttt{CycleTimer} instrumentation from step 1 is
+kept, and because the original and the $k$-split implementations are retained
+behind an environment variable so that every comparison in this section can be
+reproduced from a single binary. Running \texttt{./kmeans} with nothing set
+selects the final implementation.
+
+\begin{quote}
+\textbf{Result: $\mathbf{\prognSixSpeedup\times}$ overall}
+(\ms{\prognSixBaselineMs} $\rightarrow$ \ms{\prognSixFinalMs}), against a
+handout target of $2.1\times$ and an Amdahl ceiling of $\prognSixSmax\times$.
+That is \prognSixFracOfSmax\% of the theoretical maximum.
+\end{quote}
+
+\prognSixTableVariants
+
+Table~\ref{tab:prog6-profile} also carries a useful internal check. The two
+phases that were \emph{not} modified, \texttt{computeCentroids} and
+\texttt{computeCost}, cost within 1.7\% and 0.2\% of their original values
+after the change. Nothing moved except what was meant to move, which both
+validates comparing the two profiles against each other and rules out the
+possibility that the speedup came from accidentally doing less work.
+
+\texttt{computeAssignments} itself fell from \ms{34409.5} to \ms{5960.1}, a
+factor of $\prognSixAssignGain\times$. That figure combines both changes ---
+the loop interchange and the eight threads --- so it should not be read as a
+parallel efficiency; Section~\ref{sec:prog6sweep} separates the two.
+
+\subsection{Step 5: confirming the bound is the binding constraint}
+\label{sec:prog6sweep}
+
+\prognSixTableSweep
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{prog6_phases.png}
+\caption{Left: where the time goes before and after; the two phases that were
+not modified are unchanged. Right: measured speedup against the Amdahl bound
+computed from the measured $f$. The two curves cross at about five threads ---
+see the text for why.}
+\label{fig:prog6}
+\end{figure}
+
+The sweep confirms the diagnosis, and the shape of the comparison is more
+informative than a single number. Both curves flatten hard after four threads,
+because by then the parallel part has shrunk to the point where the fixed
+$\prognSixSerialFrac$ of serial work dominates everything else.
+
+The measured curve \emph{crosses} the Amdahl bound at about five threads,
+which is the visible result of two opposing effects. Below the crossing it runs
+above the bound, which is not a contradiction: Amdahl's Law bounds what
+parallelising a \emph{fixed} amount of work can achieve, and the loop
+interchange reduced that work, so the measured curve is not bounded by a law
+computed from the original workload. Above the crossing it falls slightly
+below, because the threading does not achieve a perfect $1/T$ on the parallel
+portion --- the same sub-linear scaling at high thread counts seen throughout
+this report, and for the same reasons: SMT contexts are not full cores, and
+turbo headroom is lost at full occupancy. The advantage from doing less work is
+roughly constant, while the shortfall from imperfect scaling grows with $T$, so
+one overtakes the other.
+
+The $T = 1$ row separates the two contributions cleanly. With threading
+switched off entirely, the final code still runs in
+\ms{\prognSixOneThreadMs} against the original's \ms{\prognSixBaselineMs}
+--- $\prognSixOneThreadSpeedup\times$ from the loop interchange alone, before
+a single extra thread is involved. Threading the interchanged code then
+contributes a further $\prognSixParallelOnly\times$, and
+$\prognSixOneThreadSpeedup \times \prognSixParallelOnly = \prognSixSpeedup$.
+Neither change would have reached the $2.1\times$ target by itself.
+
+One inconsistency is worth stating rather than hiding: the sweep's best
+eight-thread run, \ms{\prognSixSweepBestMs}, is about 3\% faster than the
+\ms{\prognSixFinalMs} recorded in Table~\ref{tab:prog6-variants} for the same
+configuration. The two are separate experiments run at different times, and 3\%
+is the run-to-run variation this workload shows on this machine. The headline
+figure quoted above is the slower of the two, because it comes from the
+experiment in which the original and the final implementation were measured in
+the same interleaved rounds and are therefore directly comparable.
+
+The profile after optimisation (Table~\ref{tab:prog6-profile}) shows the
+bottleneck has moved. \texttt{computeAssignments} has fallen to
+\prognSixAssignShareAfter\% and \texttt{computeCost} is now the largest phase
+at \prognSixCostShareAfter\%. That is exactly where the remaining time is, and
+it is exactly what the rules forbid touching: \texttt{computeCost} is a second
+function, and the one parallelisation permitted has been spent. The only other
+route --- reassociating the summation inside \texttt{dist} to break its
+dependency chain --- is ruled out by the instruction not to change that
+function's semantics. So $\prognSixSpeedup\times$ is close to the constrained
+optimum, and the constraint, not the machine, is what now binds.
+
+\subsection{Correctness}
+
+Three independent checks, since a faster wrong answer is worthless:
+
+\begin{itemize}
+\item \textbf{Iteration count.} All three implementations converge in exactly
+\prognSixIters{} iterations. Convergence is decided by \texttt{stoppingConditionMet}
+comparing per-cluster costs against $\epsilon$, so an identical count across a
+hundred iterations means the cost vector followed an identical trajectory.
+\item \textbf{No reordered arithmetic.} \texttt{dist} is called unmodified and
+each point's comparisons happen in the same order as before, so the
+floating-point results are bit-identical rather than merely close. The
+parallelisation partitions $m$, and no partial sums cross threads.
+\item \textbf{Visual check.} \texttt{plot.py} output
+(Figure~\ref{fig:prog6kmeans}) shows three well-separated clusters with
+centroids at their centres, matching the reference images in the handout.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.49\textwidth]{start.png}
+\includegraphics[width=0.49\textwidth]{end.png}
+\caption{Cluster assignments before (left) and after (right) the algorithm
+runs, produced by \texttt{plot.py} from the final implementation. Red stars are
+centroids. The 100-dimensional points are projected to 2-D by PCA, so a few
+points appear nearer a centroid other than their own; the handout notes this is
+expected.}
+\label{fig:prog6kmeans}
+\end{figure}
+
+\subsection{Summary}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+Question & Answer & Mechanism \\
+\midrule
+Where is the time spent?      & \texttt{computeAssignments}, \prognSixFPct\% & $K \times M$ calls to \texttt{dist} \\
+Why is that phase slow?       & Latency, not bandwidth & 100-long \texttt{vaddsd} chain \\
+What does Amdahl permit?      & $\prognSixSmax\times$ & $f = \prognSixF$, $T = 8$ \\
+First attempt: split on $k$?  & $\prognSixByKSpeedup\times$, missed target & $K = 3 < T = 8$ \\
+Final: split on $m$?          & $\mathbf{\prognSixSpeedup\times}$ & $10^{6}$ units, no sharing \\
+Fraction of $S_{max}$?        & \prognSixFracOfSmax\% & --- \\
+Target met?                   & Yes, $2.1\times$ required & --- \\
+What binds now?               & \texttt{computeCost}, \prognSixCostShareAfter\% & Second function, not permitted \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{What this program demonstrates.} The speedup came from one
+structural change, not from tuning: the original code was parallel along an
+axis of length three on a machine with eight contexts, and the fix was to
+notice that the same computation is also parallel along an axis of length a
+million. Profiling first is what made that visible --- without the per-phase
+breakdown there would have been no reason to prefer
+\texttt{computeAssignments}, and no way to know that Amdahl's Law left only
+$\prognSixSmax\times$ on the table before any code was written. It is also the
+clearest illustration in this assignment that the bound moves: having removed
+the original bottleneck, the program is now limited by a phase the rules do not
+allow us to touch.
 
 \end{document}

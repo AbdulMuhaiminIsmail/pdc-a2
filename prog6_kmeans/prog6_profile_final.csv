@@ -1,0 +1,4 @@
+function,total_ms,share,ms_per_iter,iterations
+computeAssignments,5960.091,0.27087,59.011,101
+computeCentroids,5988.706,0.27217,59.294,101
+computeCost,10054.443,0.45695,99.549,101
