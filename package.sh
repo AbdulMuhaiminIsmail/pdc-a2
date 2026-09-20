@@ -76,9 +76,15 @@ done
 rm -f prog*/*.ppm prog*/*.log
 rm -f ./*.log ./*.aux ./*.out ./*.toc          # LaTeX intermediates at the root
 rm -rf prog*/__pycache__ prog*/objs
-# Restore only what `make clean` deleted that is tracked, by name.
-git checkout -- prog6_kmeans/start.png prog6_kmeans/end.png 2>/dev/null || true
-echo "   cleaned; the two tracked k-means plots restored"
+# `make clean` in prog6_kmeans deletes *.png, which includes tracked figures
+# the write-up embeds. Restore every tracked file the clean removed -- scoped
+# to deletions only, so no uncommitted edit elsewhere can be reverted.
+restored=0
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    git checkout -- "$f" 2>/dev/null && restored=$((restored+1))
+done <<< "$(git diff --name-only --diff-filter=D)"
+echo "   cleaned; $restored tracked file(s) restored"
 
 say "5. tag, then write the history for the TAs"
 git tag -f -a "$TAG" -m "CS3006 Assignment 2 final submission -- roll number $ROLL" >/dev/null
